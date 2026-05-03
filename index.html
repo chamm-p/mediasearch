@@ -891,8 +891,33 @@ $("#q").addEventListener("keydown", e => {
 $("#q-clear").addEventListener("click", () => {
   $("#q").value = ""; updateQClear(); search(); $("#q").blur();
 });
-$("#type").addEventListener("change", () => { search(); $("#type").blur(); });
-$("#order").addEventListener("change", () => { search(); $("#order").blur(); });
+$("#type").addEventListener("change", () => { saveUiState(); search(); $("#type").blur(); });
+$("#order").addEventListener("change", () => { saveUiState(); search(); $("#order").blur(); });
+
+// ---- UI-State persistieren (Browser-LocalStorage) ----
+const UI_STATE_KEY = "mediasearch.ui";
+function saveUiState() {
+  try {
+    localStorage.setItem(UI_STATE_KEY, JSON.stringify({
+      order: $("#order").value,
+      type:  $("#type").value,
+    }));
+  } catch {}
+}
+function loadUiState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(UI_STATE_KEY) || "{}");
+    if (s.order) {
+      // nur uebernehmen wenn Wert in den Optionen existiert
+      const opt = [...$("#order").options].find(o => o.value === s.order);
+      if (opt) $("#order").value = s.order;
+    }
+    if (s.type !== undefined) {
+      const opt = [...$("#type").options].find(o => o.value === s.type);
+      if (opt) $("#type").value = s.type;
+    }
+  } catch {}
+}
 $("#select-all").addEventListener("click", () => {
   for (const r of results) selected.set(r.id, r);
   render(); updatePageBar();
@@ -1723,6 +1748,7 @@ $("#lora-do").addEventListener("click", async () => {
   const s = await fetch("/api/settings").then(r=>r.json());
   if (!s.root) $("#setup").classList.add("active");  // open setup if no root yet
   _lastPageSize = computePageSize();
+  loadUiState();   // letzte Sortierung / Typ-Filter aus localStorage
   loadStats(); loadStatus(); loadLog(); loadManualTags();
   // Initial search + blur, damit Pfeiltasten sofort die Seitenwahl steuern
   // (Suchfeld hat autofocus, sonst wuerde -> die Cursor-Position bewegen).
