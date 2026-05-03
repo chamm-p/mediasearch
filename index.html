@@ -250,11 +250,26 @@
        background: #000; display: flex; align-items: center; justify-content: center;
        border-radius: 4px 4px 0 0; }
   .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .card.highlight { border-color: #fa0;
-       animation: highlight-pulse 2s ease-in-out infinite; }
+  .card.highlight {
+       border-color: #ffcc00;
+       z-index: 5;
+       animation: highlight-pulse 1.2s ease-in-out infinite;
+  }
+  /* inset box-shadow ueberlebt overflow:hidden vom Grid: gut sichtbarer
+     dicker gelb-leuchtender Innen-Ring + zusaetzlicher Aussen-Glow */
   @keyframes highlight-pulse {
-       0%, 100% { box-shadow: 0 0 0 0 rgba(255,170,0,0.7); }
-       50%      { box-shadow: 0 0 0 14px rgba(255,170,0,0); }
+       0%, 100% {
+         box-shadow:
+           inset 0 0 0 6px #ffcc00,
+           inset 0 0 24px 6px rgba(255,204,0,0.5),
+           0 0 18px 4px rgba(255,204,0,0.7);
+       }
+       50% {
+         box-shadow:
+           inset 0 0 0 6px #ffe066,
+           inset 0 0 32px 10px rgba(255,224,102,0.7),
+           0 0 30px 8px rgba(255,204,0,0.35);
+       }
   }
   .card.selected { border-color: #2d5; }
   /* alte aspect-ratio-Regel ueberschrieben oben */
