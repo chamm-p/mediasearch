@@ -48,18 +48,25 @@
     color: #2a0606; border-color: transparent; font-weight: 600;
   }
   /* Toolbar unten */
-  body { padding-bottom: 64px; }   /* Platz fuer Bottom-Toolbar */
+  body { padding-bottom: 60px; }
   header {
-    padding: 10px 14px; background: var(--bg-2);
+    padding: 8px 12px; background: var(--bg-2);
     border-top: 1px solid var(--line);
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
-    display: flex; gap: 10px; flex-wrap: nowrap; align-items: center;
-    height: 64px;
+    display: flex; gap: 8px; flex-wrap: nowrap; align-items: center;
+    height: 60px; overflow-x: auto;
   }
-  header .left { display: flex; gap: 8px; align-items: center;
-       color: var(--text-dim); font-size: 0.85rem; min-width: 180px; }
-  header .center { flex: 1; display: flex; gap: 8px; justify-content: center; }
-  header .right { display: flex; gap: 6px; align-items: center; }
+  header > div { flex-shrink: 0; }
+  header .left { display: flex; gap: 6px; align-items: center;
+       color: var(--text-dim); font-size: 0.85rem; }
+  header .left #page-info { white-space: nowrap; padding: 0 4px;
+       font-variant-numeric: tabular-nums; }
+  header .center { flex: 1; min-width: 0;
+       display: flex; gap: 6px; justify-content: center; }
+  header .right { display: flex; gap: 4px; align-items: center; }
+  header button { padding: 7px 11px; font-size: 0.85rem; }
+  header select { padding: 6px 8px; font-size: 0.85rem; }
+  header input[type=text] { padding: 7px 10px; }
   header input[type=text] {
     flex: 1 1 360px; min-width: 240px; padding: 9px 12px;
     background: var(--bg-3); color: var(--text);
@@ -165,13 +172,14 @@
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
   #drawer {
-    position: fixed; left: 0; right: 0; bottom: 64px; z-index: 39;
+    position: fixed; left: 0; right: 0; bottom: 60px; z-index: 39;
     background: var(--bg-2); border-top: 1px solid var(--line);
     box-shadow: 0 -8px 24px rgba(0,0,0,.4);
-    transform: translateY(100%); transition: transform .25s ease;
-    display: flex; flex-direction: column; max-height: 60vh;
+    max-height: 0; overflow: hidden;
+    transition: max-height .25s ease;
+    display: flex; flex-direction: column;
   }
-  #drawer.open { transform: translateY(0); }
+  #drawer.open { max-height: 60vh; }
   #drawer .head {
     display: flex; gap: 4px; align-items: center;
     padding: 6px 10px 0; border-bottom: 1px solid var(--line);
@@ -193,8 +201,8 @@
   /* Drawer-Inhalt */
   .drawer-pane { display: none; padding: 12px 16px; overflow: auto; flex: 1; }
   .drawer-pane.active { display: block; }
-  #pane-status { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-  #pane-status.active { display: grid; }
+  #pane-status.active { display: grid;
+       grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
   #pane-status h4 { margin: 0 0 6px; font-size: 0.78rem; color: var(--text-dim);
        text-transform: uppercase; letter-spacing: .5px; }
   #pane-status ul { margin: 0; padding: 0; list-style: none;
@@ -217,12 +225,22 @@
   .grid { display: grid;
           grid-template-columns: repeat(var(--cols, 6), 1fr);
           grid-template-rows:    repeat(var(--rows, 4), 1fr);
-          gap: 10px; padding: 12px;
-          height: calc(100vh - 64px);
+          gap: 10px; padding: 12px 36px;
+          height: calc(100vh - 60px);
           overflow: hidden; }
-  .card { min-height: 0; min-width: 0; }
-  .card .thumb { aspect-ratio: auto; flex: 1 1 auto;
-       width: 100%; height: 100%; }
+  /* Edge-Navigation: schmale Pfeil-Buttons ueber die volle Hoehe an
+     beiden Seiten - Klick = Seite vor/zurueck */
+  .edge-nav { position: fixed; top: 0; bottom: 60px; width: 28px;
+       background: rgba(0,0,0,.0); color: var(--text-faint);
+       cursor: pointer; display: flex; align-items: center; justify-content: center;
+       font-size: 1.6rem; user-select: none; z-index: 8;
+       transition: background .15s ease, color .15s ease;
+       border: none; padding: 0; }
+  .edge-nav:hover { background: rgba(106,170,255,0.12); color: var(--text); }
+  .edge-nav:disabled { opacity: 0.2; cursor: default; }
+  .edge-nav:disabled:hover { background: transparent; color: var(--text-faint); }
+  .edge-nav.left  { left: 0; }
+  .edge-nav.right { right: 0; }
   .card { background: #1a1a1a; border: 2px solid transparent; border-radius: 6px;
           cursor: pointer; position: relative; transition: border-color .1s;
           display: flex; flex-direction: column; min-height: 0; min-width: 0;
@@ -243,13 +261,15 @@
   .card .badge { position: absolute; top: 6px; left: 6px; padding: 2px 8px;
                  background: rgba(0,0,0,.75); border-radius: 3px; font-size: 0.8rem; }
   .card .badge.video { background: rgba(220,40,40,.9); }
-  .card .meta { padding: 4px 8px; font-size: 0.78rem; flex: 0 0 auto;
-       background: var(--bg-2); border-top: 1px solid var(--line-soft); }
-  .card .meta .desc { color: var(--text-dim);
+  /* Meta = nur ein dezenter Pfad-Strip am unteren Rand der Karte.
+     Description und Tags erscheinen ausschliesslich im Hover-Popup. */
+  .card .meta { padding: 3px 8px; font-size: 0.72rem; flex: 0 0 auto;
+       background: rgba(0,0,0,.45); border-top: 1px solid var(--line-soft);
+       max-height: 22px; line-height: 1.2; }
+  .card .meta .desc { display: none; }
+  .card .meta .path { color: var(--text-dim);
        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-       font-size: 0.78rem; line-height: 1.3; }
-  .card .meta .path { color: var(--text-faint); font-size: 0.72rem;
-       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+       font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.7rem; }
   /* Hover-Popup mit voller Beschreibung + Tags - oeffnet direkt unter
      dem Bild und ueberdeckt die abgeschnittene Meta-Zeile */
   .card .thumb { position: relative; }
@@ -425,6 +445,8 @@
   <div id="pane-log" class="drawer-pane"></div>
 </div>
 
+<button class="edge-nav left"  id="edge-prev" title="vorherige Seite (Pfeil-links)">&#10094;</button>
+<button class="edge-nav right" id="edge-next" title="naechste Seite (Pfeil-rechts)">&#10095;</button>
 <div class="grid" id="grid"></div>
 <!-- versteckter Container fuer alten Code, sel-info wird via Pille/Header angezeigt -->
 <span id="sel-info" style="display:none"></span>
@@ -574,6 +596,8 @@ function updatePageBar() {
   $("#page-info").textContent = `${from}-${to} von ${totalHits}${sel}`;
   $("#page-prev").disabled = currentOffset <= 0;
   $("#page-next").disabled = currentOffset + results.length >= totalHits;
+  $("#edge-prev").disabled = $("#page-prev").disabled;
+  $("#edge-next").disabled = $("#page-next").disabled;
 }
 $("#page-prev").addEventListener("click", () => {
   const pageSize = parseInt($("#limit-q").value) || 200;
@@ -583,21 +607,31 @@ $("#page-next").addEventListener("click", () => {
   const pageSize = parseInt($("#limit-q").value) || 200;
   search({offset: currentOffset + pageSize, reset: false});
 });
+// Edge-Pfeile triggern dasselbe + spiegeln den disabled-State
+$("#edge-prev").addEventListener("click", () => $("#page-prev").click());
+$("#edge-next").addEventListener("click", () => $("#page-next").click());
 
 // Viewport-fit: berechne wie viele cols x rows passen, setze Grid-Vars
 // und aktualisiere die Page-Size.
-const MIN_CARD_W = 200;
-const MIN_CARD_H = 180;
+//   - 1920x1080  -> ~10x8  = 80
+//   - 1366x768   -> ~8x5   = 40
+//   - 3840x2160  -> capped 14x10 = 140 (Karten dann groesser)
+const MIN_CARD_W = 170;
+const MIN_CARD_H = 115;
+const MAX_COLS   = 14;
+const MAX_ROWS   = 10;
 let _lastPageSize = 0;
 function computePageSize() {
   const vw = window.innerWidth;
-  const vh = window.innerHeight - 64;   // Toolbar
+  const vh = window.innerHeight - 60;   // Toolbar
   const padding = 24;                    // 12px Grid-padding *2
   const gap     = 10;
   const usableW = Math.max(MIN_CARD_W, vw - padding);
   const usableH = Math.max(MIN_CARD_H, vh - padding);
-  const cols = Math.max(1, Math.floor((usableW + gap) / (MIN_CARD_W + gap)));
-  const rows = Math.max(1, Math.floor((usableH + gap) / (MIN_CARD_H + gap)));
+  const cols = Math.min(MAX_COLS, Math.max(1,
+       Math.floor((usableW + gap) / (MIN_CARD_W + gap))));
+  const rows = Math.min(MAX_ROWS, Math.max(1,
+       Math.floor((usableH + gap) / (MIN_CARD_H + gap))));
   document.documentElement.style.setProperty("--cols", cols);
   document.documentElement.style.setProperty("--rows", rows);
   const pageSize = cols * rows;
