@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+openai>=1.30
+Pillow>=10.0
+python-multipart
+jinja2

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# mediasearch artifacts (per-installation)
+data/
+mediasearch.log
+mediasearch.log.*
+settings.json
+browser/
+lora_exports/
+
+# Persoenliche Konfig (Vorlagen *.example.* sind im Repo)
+config.toml
+synonyms.json
+manual_tags.json
+
+# Editor / OS
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+*.swp
+*~

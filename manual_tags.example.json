@@ -1,0 +1,8 @@
+{
+  "_comment": "Tags fuer manuelle Vergabe. Klick im UI = an alle ausgewaehlten Files anhaengen, Shift-Klick = entfernen. In der Slideshow Buttons oben links. Lowercase wird automatisch erzwungen, Synonyms werden angewendet.",
+  "groups": {
+    "Bewertung":  ["favorit", "highlight"],
+    "Personen":   ["ich", "vater", "mutter", "kind", "familie"],
+    "Themen":     ["urlaub", "geburtstag", "weihnachten"]
+  }
+}

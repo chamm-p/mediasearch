@@ -1,0 +1,9 @@
+{
+  "_comment": "Mappt Synonyme auf einen Kanonbegriff. Format: {kanon: [alias1, ...]}. Wird beim Tagging UND bei der Re-Normalisierung angewendet. Lowercase, keine Mehrdeutigkeiten.",
+  "boot": ["schiff", "dampfer", "yacht", "segelboot"],
+  "auto": ["wagen", "pkw", "fahrzeug"],
+  "kind": ["kleinkind", "kinder", "junge", "maedchen"],
+  "hund": ["welpe", "hunde"],
+  "katze": ["kitten", "katzen", "kater"],
+  "person": ["mensch", "menschen", "personen", "leute"]
+}

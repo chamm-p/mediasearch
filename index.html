@@ -1,0 +1,1332 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>mediasearch</title>
+<style>
+  :root { color-scheme: dark; font-size: 16px; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee;
+         font-size: 1rem; line-height: 1.4; }
+  header { padding: 12px 16px; background: #1a1a1a; border-bottom: 1px solid #333;
+           position: sticky; top: 0; z-index: 10; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  header input[type=text] { flex: 1 1 360px; min-width: 240px; padding: 10px 12px;
+           background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; font-size: 1rem; }
+  .q-wrap { flex: 1 1 360px; min-width: 240px; position: relative; display: flex; }
+  .q-wrap input { flex: 1; padding-right: 32px !important; }
+  .q-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+       width: 22px; height: 22px; border: none; background: transparent; color: #888;
+       cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0; display: none;
+       border-radius: 50%; }
+  .q-clear:hover { color: #eee; background: #333; }
+  .q-wrap.has-text .q-clear { display: block; }
+  header select, header button { padding: 10px 14px; background: #222; color: #eee;
+           border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 0.95rem; }
+  header button:hover { background: #2c2c2c; }
+  header button.primary { background: #2d5; color: #000; border-color: #2d5; }
+  header button.primary:disabled { background: #333; color: #777; border-color: #444; cursor: default; }
+  .stats { font-size: 0.9rem; color: #aaa; padding: 6px 16px; background: #181818;
+           display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .stats button { background: #222; color: #ddd; border: 1px solid #444;
+           border-radius: 3px; font-size: 0.85rem; padding: 4px 10px; cursor: pointer; }
+
+  /* Manuelle Tag-Leiste */
+  #mtags { padding: 8px 14px; background: #181818; border-bottom: 1px solid #2a2a2a;
+       display: none; font-size: 0.9rem; color: #ccc; }
+  #mtags.active { display: block; }
+  #mtags .group { display: inline-flex; align-items: center; gap: 6px;
+       margin-right: 18px; flex-wrap: wrap; }
+  #mtags .group .label { color: #888; font-size: 0.85rem; margin-right: 4px; }
+  #mtags .chip { display: inline-block; padding: 4px 10px; background: #222;
+       color: #ddd; border: 1px solid #444; border-radius: 14px; cursor: pointer;
+       font-size: 0.85rem; user-select: none; }
+  #mtags .chip:hover { background: #2c2c2c; border-color: #888; }
+  #mtags .chip.remove-mode { background: #6a2a2a; border-color: #b33; }
+  #mtags .info { color: #888; font-size: 0.85rem; margin-left: 12px; }
+
+  /* Setup panel */
+  #setup { background: #181818; border-bottom: 1px solid #2a2a2a; padding: 14px;
+           display: none; }
+  #setup.active { display: block; }
+  #setup h3 { margin: 0 0 10px; font-size: 0.9rem; color: #aaa;
+           text-transform: uppercase; letter-spacing: .5px; }
+  #setup .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  #setup .row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+  #setup label { font-size: 0.95rem; color: #bbb; min-width: 130px; }
+  #setup input[type=text], #setup input[type=number], #setup input[type=password],
+  #setup select {
+       flex: 1; padding: 8px 10px; background: #222; color: #eee;
+       border: 1px solid #444; border-radius: 4px; font-size: 0.95rem; }
+  #setup .actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+  #setup button { padding: 9px 14px; background: #222; color: #eee;
+       border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 0.95rem; }
+  #setup button.primary { background: #2d5; color: #000; border-color: #2d5; }
+  #setup button.danger { background: #b33; color: #fff; border-color: #b33; }
+  #setup button:disabled { opacity: .5; cursor: default; }
+
+  /* Dir picker modal */
+  #picker { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 50;
+       display: none; align-items: center; justify-content: center; }
+  #picker.active { display: flex; }
+  #picker .box { background: #1c1c1c; border: 1px solid #444; border-radius: 6px;
+       width: 600px; max-height: 80vh; display: flex; flex-direction: column; }
+  #picker .head { padding: 8px 12px; border-bottom: 1px solid #333;
+       font-family: monospace; font-size: 12px; color: #ccc; word-break: break-all; }
+  #picker ul { list-style: none; margin: 0; padding: 0; overflow: auto; }
+  #picker li { padding: 6px 12px; cursor: pointer; font-family: monospace; font-size: 12px;
+       border-bottom: 1px solid #222; }
+  #picker li:hover { background: #2a2a2a; }
+  #picker li.parent { color: #8ad; }
+  #picker .actions { padding: 8px 12px; border-top: 1px solid #333; display: flex;
+       gap: 8px; justify-content: flex-end; }
+  #picker button { padding: 6px 12px; background: #222; color: #eee;
+       border: 1px solid #444; border-radius: 4px; cursor: pointer; }
+  #picker button.primary { background: #2d5; color: #000; border-color: #2d5; }
+
+  /* Status panel */
+  details.status { background: #181818; border-bottom: 1px solid #2a2a2a; }
+  details.status > summary { padding: 8px 16px; cursor: pointer; font-size: 0.95rem;
+       color: #ccc; user-select: none; list-style: none; }
+  details.status > summary::-webkit-details-marker { display: none; }
+  details.status > summary::before { content: "\25B6 "; color: #555; font-size: 10px; }
+  details.status[open] > summary::before { content: "\25BC "; }
+  .status-body { padding: 10px 16px; font-size: 0.9rem; display: grid;
+       grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .status-body h4 { margin: 0 0 6px; font-size: 0.85rem; color: #aaa;
+       text-transform: uppercase; letter-spacing: .5px; }
+  .status-body ul { margin: 0; padding: 0; list-style: none; max-height: 220px; overflow: auto; }
+  .status-body li { padding: 3px 0; color: #ccc; white-space: nowrap;
+       overflow: hidden; text-overflow: ellipsis; font-family: monospace; font-size: 0.85rem; }
+  .status-body li.err { color: #f88; }
+  .status-body li .age { color: #555; margin-right: 6px; }
+  .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+       background: #2d5; margin-right: 6px; vertical-align: middle;
+       animation: pulse 1.2s ease-in-out infinite; }
+  .pulse.idle { background: #555; animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* Tagger log */
+  #log-panel { background: #0a0a0a; border-bottom: 1px solid #2a2a2a;
+       max-height: 320px; overflow: auto; padding: 10px 16px; font-family: monospace;
+       font-size: 0.9rem; color: #ddd; display: none; }
+  #log-panel.active { display: block; }
+  #log-panel .line { white-space: pre; }
+  #log-panel .err  { color: #f88; }
+  #log-panel .ok   { color: #8d8; }
+
+  /* Result grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+          gap: 10px; padding: 12px; }
+  .card { background: #1a1a1a; border: 2px solid transparent; border-radius: 6px;
+          cursor: pointer; position: relative; transition: border-color .1s; }
+  .card:hover { z-index: 4; }
+  .card .thumb { border-radius: 4px 4px 0 0; }
+  .card.highlight { border-color: #fa0;
+       animation: highlight-pulse 1.4s ease-out 3; }
+  @keyframes highlight-pulse {
+       0%   { box-shadow: 0 0 0 0 rgba(255,170,0,0.85); }
+       100% { box-shadow: 0 0 0 16px rgba(255,170,0,0); }
+  }
+  .card.selected { border-color: #2d5; }
+  .card .thumb { width: 100%; aspect-ratio: 1; background: #000;
+                 display: flex; align-items: center; justify-content: center; }
+  .card .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .card .badge { position: absolute; top: 6px; left: 6px; padding: 2px 8px;
+                 background: rgba(0,0,0,.75); border-radius: 3px; font-size: 0.8rem; }
+  .card .badge.video { background: rgba(220,40,40,.9); }
+  .card .meta { padding: 8px 10px; font-size: 0.9rem; }
+  .card .meta .desc { color: #ddd; max-height: 4.5em; overflow: hidden; }
+  .card .meta .path { color: #777; font-size: 0.8rem; margin-top: 6px;
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Hover-Popup mit voller Beschreibung + Tags - oeffnet direkt unter
+     dem Bild und ueberdeckt die abgeschnittene Meta-Zeile */
+  .card .thumb { position: relative; }
+  .card .full { display: none; position: absolute; left: -2px; right: -2px;
+       top: 100%;
+       z-index: 5; background: #1c1c1c; border: 1px solid #555; border-radius: 4px;
+       padding: 10px 12px; font-size: 0.9rem; color: #eee; line-height: 1.5;
+       box-shadow: 0 4px 12px rgba(0,0,0,.6); white-space: normal;
+       max-height: 60vh; overflow: auto; }
+  .card:hover .thumb .full { display: block; }
+  .card .full .full-tags { margin-top: 8px; color: #8ad; font-size: 0.85rem; }
+  .card .full .full-mtags { margin-top: 4px; color: #f8a; font-size: 0.85rem; }
+  .card .full .full-path { margin-top: 8px; color: #888; font-size: 0.8rem;
+       font-family: monospace; word-break: break-all; }
+  .empty { padding: 40px; color: #aaa; text-align: center; font-size: 1rem; }
+
+  /* slideshow */
+  #slideshow { position: fixed; inset: 0; background: #000; z-index: 100; display: none;
+               align-items: center; justify-content: center; }
+  #slideshow.active { display: flex; }
+  #slideshow img { width: 100%; height: 100%; object-fit: contain;
+       image-rendering: auto; transition: transform .15s ease; }
+  /* Bei 90/270 Grad Rotation: tauschen wir width/height-Limits, damit das
+     gedrehte Bild trotzdem den Screen ausfuellt */
+  #slideshow img.rot90, #slideshow img.rot270 {
+       width: 100vh; height: 100vw; }
+  #slideshow .controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; }
+  #slideshow .controls button, #slideshow .controls input {
+       background: rgba(20,20,20,.85); color: #eee;
+       border: 1px solid #555; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+  #slideshow .info { position: absolute; bottom: 8px; left: 8px; right: 8px;
+       color: #ccc; font-size: 12px; background: rgba(0,0,0,.5); padding: 4px 8px;
+       border-radius: 4px;
+       opacity: 0; transition: opacity .3s ease;
+       pointer-events: none; }
+  #slideshow.show-chrome .info { opacity: 1; }
+  #slideshow.hide-info .info { display: none !important; }
+  /* Bild-Beschreibung-Overlay (T-Toggle) - rechts unten */
+  #slide-text { position: absolute; bottom: 40px; right: 8px;
+       max-width: 420px; max-height: 60vh; overflow: auto;
+       color: #eee; font-size: 0.9rem; line-height: 1.4;
+       background: rgba(0,0,0,.75); padding: 10px 14px; border-radius: 6px;
+       display: none; box-shadow: 0 4px 12px rgba(0,0,0,.6); }
+  #slide-text.active { display: block; }
+  #slide-text .st-tags { color: #8ad; margin-top: 6px; font-size: 0.85rem; }
+  #slide-text .st-mtags { color: #f8a; margin-top: 4px; font-size: 0.85rem; }
+  /* Manuelle Tag-Leiste oben links */
+  #slide-mtag-bar { position: absolute; top: 8px; left: 8px;
+       display: flex; flex-wrap: wrap; gap: 6px; max-width: 60vw; z-index: 2; }
+  #slide-mtag-bar .slide-mtag { padding: 4px 10px; background: rgba(20,20,20,.85);
+       color: #ddd; border: 1px solid #555; border-radius: 14px; cursor: pointer;
+       font-size: 0.85rem; user-select: none; }
+  #slide-mtag-bar .slide-mtag:hover { background: rgba(40,40,40,.95); color: #fff; }
+  #slide-mtag-bar .slide-mtag.active { background: #f8a; color: #000;
+       border-color: #f8a; font-weight: bold; }
+</style>
+</head>
+<body>
+<header>
+  <span class="q-wrap" id="q-wrap">
+    <input id="q" type="text" placeholder='Suche (z.B. "sunset beach", katze, NOT outdoor)' autofocus>
+    <button class="q-clear" id="q-clear" type="button" title="Suche leeren (Esc)">&times;</button>
+  </span>
+  <select id="type">
+    <option value="">Alle</option>
+    <option value="image">Bilder</option>
+    <option value="video">Videos</option>
+  </select>
+  <select id="order" title="Sortierung der Trefferliste">
+    <option value="relevance">Relevanz</option>
+    <option value="newest">Neueste zuerst</option>
+    <option value="oldest">Aelteste zuerst</option>
+    <option value="path" selected>Pfad / Name</option>
+    <option value="random">Random</option>
+  </select>
+  <select id="limit-q">
+    <option>50</option><option selected>200</option><option>500</option><option>1000</option>
+  </select>
+  <button id="search-btn">Suchen</button>
+  <button id="select-all">Alle</button>
+  <button id="clear-sel">Auswahl loeschen</button>
+  <button id="slideshow-btn" class="primary" disabled>Slideshow</button>
+  <button id="play-btn" class="primary" disabled>Random Play</button>
+  <button id="lora-btn" disabled>LoRA Export</button>
+  <button id="toggle-setup">Setup &amp; Tagging</button>
+</header>
+
+<div class="stats">
+  <span id="stats">-</span>
+  <span><button id="toggle-log">Log</button></span>
+</div>
+
+<div id="mtags">
+  <span id="mtags-groups"></span>
+  <span class="info" id="mtags-info">Klick = anhaengen, Shift-Klick = entfernen</span>
+</div>
+
+<div id="setup">
+  <h3>Setup &amp; Tagging</h3>
+  <div class="grid2">
+    <div>
+      <div class="row"><label>Wurzelverzeichnis</label>
+        <input id="s-root" type="text" placeholder="/pfad/zu/medien">
+        <button id="s-browse">Waehlen...</button></div>
+      <div class="row"><label>Limit</label>
+        <input id="s-limit" type="number" min="1" placeholder="(leer = alle)"></div>
+      <div class="row"><label>Workers</label>
+        <input id="s-workers" type="number" min="1" max="32" value="4"></div>
+      <div class="row"><label>Nur Typ</label>
+        <select id="s-only">
+          <option value="">beide</option>
+          <option value="image">images</option>
+          <option value="video">videos</option>
+        </select></div>
+      <div class="row"><label>Retry errors</label>
+        <input id="s-retry" type="checkbox"></div>
+      <div class="row"><label>Re-Tag</label>
+        <input id="s-retag" type="checkbox">
+        <span style="font-size:11px;color:#888">setzt bereits getaggte Files
+        zurueck (zusammen mit "Nur Typ" begrenzbar)</span></div>
+    </div>
+    <div>
+      <h3 style="margin-top:0">LLM-Endpoints</h3>
+      <div id="ep-list" style="font-size:0.9rem">lade...</div>
+      <div style="margin-top:8px;font-size:0.8rem;color:#888">
+        Endpoints kommen aus <code>config.toml</code>. Hier nur ein/ausschalten -
+        zum Hinzufuegen/Aendern <code>config.toml</code> editieren und Server neu starten.
+      </div>
+    </div>
+  </div>
+  <div class="actions">
+    <button id="s-save">Speichern</button>
+    <button id="s-test">LLM testen</button>
+    <button id="s-rescan" title="Filesystem neu durchscannen ohne LLM-Aufruf - findet neue, verschobene oder geloeschte Files">Re-Scan</button>
+    <button id="s-start" class="primary">Tagging starten</button>
+    <button id="s-stop" class="danger" disabled>Stoppen</button>
+    <button id="s-normalize" title="Wendet synonyms.json auf existierende Tags an">
+      Tags normalisieren</button>
+    <button id="s-optimize" title="VACUUM + ANALYZE + WAL-Checkpoint - macht Suche schneller">
+      DB optimieren</button>
+    <span id="s-msg" style="font-size:12px;align-self:center"></span>
+  </div>
+</div>
+
+<div id="log-panel"></div>
+
+<details class="status" id="status-panel">
+  <summary><span class="pulse idle" id="pulse"></span><span id="status-line">lade Status...</span></summary>
+  <div class="status-body">
+    <div><h4>Aktiv (processing)</h4><ul id="status-active"><li style="color:#555">-</li></ul></div>
+    <div><h4>Zuletzt fertig</h4><ul id="status-done"><li style="color:#555">-</li></ul></div>
+    <div><h4>Letzte Fehler</h4><ul id="status-err"><li style="color:#555">-</li></ul></div>
+  </div>
+</details>
+
+<div class="grid" id="grid"></div>
+<div id="page-bar" style="padding:14px 16px;text-align:center;display:none;
+     display:flex;justify-content:center;align-items:center;gap:10px;
+     background:#181818;border-top:1px solid #2a2a2a">
+  <button id="page-prev" style="padding:8px 14px;background:#222;color:#eee;
+       border:1px solid #444;border-radius:4px;cursor:pointer;font-size:0.95rem">&laquo; Zurueck</button>
+  <span id="page-info" style="color:#ccc;font-size:0.95rem;min-width:200px"></span>
+  <button id="page-next" style="padding:8px 14px;background:#222;color:#eee;
+       border:1px solid #444;border-radius:4px;cursor:pointer;font-size:0.95rem">Weiter &raquo;</button>
+  <span id="sel-info" style="color:#8d8;font-size:0.9rem;margin-left:20px"></span>
+</div>
+<div class="empty" id="empty" style="display:none">Keine Treffer.</div>
+
+<!-- Directory picker -->
+<div id="picker">
+  <div class="box">
+    <div class="head" id="picker-path">/</div>
+    <ul id="picker-list"></ul>
+    <div class="actions">
+      <button id="picker-cancel">Abbrechen</button>
+      <button id="picker-pick" class="primary">Diesen Ordner waehlen</button>
+    </div>
+  </div>
+</div>
+
+<!-- LoRA Export Modal -->
+<div id="lora-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.7);
+     z-index:60;display:none;align-items:center;justify-content:center">
+  <div style="background:#1c1c1c;border:1px solid #444;border-radius:8px;
+              width:520px;max-width:90vw;padding:18px 20px;color:#eee">
+    <h3 style="margin:0 0 12px;font-size:1rem">LoRA Export</h3>
+    <div id="lora-summary" style="font-size:0.9rem;color:#aaa;margin-bottom:12px"></div>
+    <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;font-size:0.9rem;align-items:center">
+      <label>Ordnername</label>
+      <input id="lora-name" type="text" placeholder="lora-export-YYYYMMDD-HHMMSS"
+             style="padding:6px 8px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+
+      <label>Trigger-Word</label>
+      <input id="lora-trigger" type="text" placeholder="(optional)"
+             style="padding:6px 8px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+
+      <label>Max Tags</label>
+      <input id="lora-maxtags" type="number" value="0" min="0"
+             title="0 = unlimitiert"
+             style="padding:6px 8px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+
+      <label></label>
+      <label style="font-weight:normal">
+        <input id="lora-rename" type="checkbox" checked> Files in 0001.jpg / 0002.jpg umbenennen
+      </label>
+      <label></label>
+      <label style="font-weight:normal">
+        <input id="lora-incl-auto" type="checkbox" checked> Auto-Tags einschliessen (Manual-Tags zuerst)
+      </label>
+      <label></label>
+      <label style="font-weight:normal">
+        <input id="lora-incl-desc" type="checkbox"> Beschreibung als 1. Zeile mit aufnehmen
+      </label>
+    </div>
+    <div style="margin-top:14px;font-size:0.8rem;color:#888">
+      Ziel: <code>&lt;scripts&gt;/lora_exports/&lt;ordnername&gt;/</code> -
+      jedes Bild bekommt ein <code>.txt</code> mit Komma-separierten Tags.
+      Videos in der Auswahl werden uebersprungen.
+    </div>
+    <div id="lora-result" style="margin-top:10px;font-size:0.9rem"></div>
+    <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="lora-cancel" style="padding:8px 14px;background:#222;color:#eee;
+              border:1px solid #444;border-radius:4px;cursor:pointer">Abbrechen</button>
+      <button id="lora-do" style="padding:8px 14px;background:#2d5;color:#000;
+              border:1px solid #2d5;border-radius:4px;cursor:pointer">Exportieren</button>
+    </div>
+  </div>
+</div>
+
+<!-- Slideshow -->
+<div id="slideshow">
+  <img id="slide-img">
+  <div id="slide-mtag-bar"></div>
+  <div id="slide-text"></div>
+  <div class="info" id="slide-info"></div>
+  <div class="controls">
+    <button id="slide-prev" title="Pfeil links">&laquo;</button>
+    <button id="slide-pause" title="Space">Pause</button>
+    <button id="slide-next" title="Pfeil rechts">&raquo;</button>
+    <button id="slide-mode" title="R = Modus umschalten">Serial</button>
+    <input id="slide-delay" type="number" min="1" max="60" value="4" style="width:60px" title="Sekunden pro Bild">
+    <button id="slide-fs" title="F = Vollbild">Vollbild</button>
+    <button id="slide-close" title="Esc">X</button>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const grid = $("#grid");
+const empty = $("#empty");
+const selected = new Map();   // id -> item (persistiert ueber Seiten)
+let results = [];
+
+function escapeHtml(s) {
+  return (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmtAge(sec) {
+  if (sec < 60) return Math.floor(sec) + "s";
+  if (sec < 3600) return Math.floor(sec/60) + "m";
+  return Math.floor(sec/3600) + "h";
+}
+
+// ---- search & grid ----
+async function loadStats() {
+  const r = await fetch("/api/stats").then(r=>r.json());
+  if (r.no_root) { $("#stats").textContent = "kein Wurzelverzeichnis gesetzt - oeffne Setup"; return; }
+  const parts = [`root: ${r.root}`, `total: ${r.total}`];
+  for (const [t, st] of Object.entries(r.by_type || {})) {
+    const inner = Object.entries(st).map(([k,v])=>`${k}=${v}`).join(", ");
+    parts.push(`${t} {${inner}}`);
+  }
+  $("#stats").textContent = parts.join("  |  ");
+}
+
+let totalHits = 0;
+let currentOffset = 0;
+
+async function search(opts={}) {
+  const pageSize = parseInt($("#limit-q").value) || 200;
+  // bei neuer Suche -> Seite 0; sonst gegebenes offset
+  if (opts.reset !== false) currentOffset = 0;
+  if (opts.offset != null) currentOffset = opts.offset;
+
+  const params = new URLSearchParams({
+    q: $("#q").value, type: $("#type").value,
+    order: $("#order").value, limit: pageSize, offset: currentOffset,
+  });
+  const r = await fetch("/api/search?" + params).then(r=>r.json());
+  results = r.results || [];
+  totalHits = r.total ?? results.length;
+  render();
+  updatePageBar();
+  // hoch zum Anfang scrollen bei Seitenwechsel
+  if (opts.scrollTop !== false) window.scrollTo({top: 0, behavior: "instant"});
+}
+
+function updatePageBar() {
+  const bar = $("#page-bar");
+  const pageSize = parseInt($("#limit-q").value) || 200;
+  if (!totalHits) { bar.style.display = "none"; return; }
+  bar.style.display = "flex";
+  const from = currentOffset + 1;
+  const to   = Math.min(currentOffset + results.length, totalHits);
+  const pageNum = Math.floor(currentOffset / pageSize) + 1;
+  const pages   = Math.max(1, Math.ceil(totalHits / pageSize));
+  $("#page-info").textContent =
+    `${from}-${to} von ${totalHits}  (Seite ${pageNum}/${pages})`;
+  $("#page-prev").disabled = currentOffset <= 0;
+  $("#page-next").disabled = currentOffset + results.length >= totalHits;
+  // Auswahl-Info: ueber Seiten persistent
+  if (selected.size) {
+    $("#sel-info").textContent = `${selected.size} ausgewaehlt`;
+  } else {
+    $("#sel-info").textContent = "";
+  }
+}
+$("#page-prev").addEventListener("click", () => {
+  const pageSize = parseInt($("#limit-q").value) || 200;
+  search({offset: Math.max(0, currentOffset - pageSize), reset: false});
+});
+$("#page-next").addEventListener("click", () => {
+  const pageSize = parseInt($("#limit-q").value) || 200;
+  search({offset: currentOffset + pageSize, reset: false});
+});
+
+function render() {
+  grid.innerHTML = "";
+  empty.style.display = results.length ? "none" : "";
+  for (const it of results) {
+    const card = document.createElement("div");
+    card.className = "card" + (selected.has(it.id) ? " selected" : "");
+    card.dataset.id = it.id;
+    const mtags = it.manual_tags || [];
+    const tagsLine  = it.tags.slice(0, 8).join(", ");
+    const allTags   = it.tags.join(", ");
+    const allMTags  = mtags.join(", ");
+    const mtagsLine = mtags.slice(0, 6).join(", ");
+    card.innerHTML = `
+      <div class="thumb">
+        <img loading="lazy" src="/thumb/${it.id}" onerror="this.style.display='none'">
+        <div class="full">
+          <div>${escapeHtml(it.description || "(keine Beschreibung)")}</div>
+          <div class="full-tags">${escapeHtml(allTags || "(keine auto-tags)")}</div>
+          ${mtags.length ? `<div class="full-mtags">★ ${escapeHtml(allMTags)}</div>` : ""}
+          <div class="full-path">${escapeHtml(it.path)}</div>
+        </div>
+      </div>
+      <span class="badge ${it.type}">${it.type}</span>
+      <div class="meta">
+        <div class="desc">${escapeHtml(it.description || "")}</div>
+        <div class="desc" style="color:#8ad">${escapeHtml(tagsLine)}</div>
+        ${mtags.length ? `<div class="desc" style="color:#f8a">★ ${escapeHtml(mtagsLine)}</div>` : ""}
+        <div class="path" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</div>
+      </div>`;
+    card.addEventListener("click", (e) => {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) { toggleSel(it, card); return; }
+      if (it.type === "image") {
+        startSlideshowAt(it);
+      } else {
+        // Videos: weiterhin im Standard-Viewer oeffnen
+        fetch("/api/open", {method:"POST", headers:{"Content-Type":"application/json"},
+                            body: JSON.stringify({id: it.id})});
+      }
+    });
+    card.addEventListener("contextmenu", (e) => { e.preventDefault(); toggleSel(it, card); });
+    grid.appendChild(card);
+  }
+  updateActionState();
+}
+function toggleSel(item, card) {
+  if (selected.has(item.id)) { selected.delete(item.id); card.classList.remove("selected"); }
+  else { selected.set(item.id, item); card.classList.add("selected"); }
+  updateActionState();
+  updatePageBar();
+}
+function updateActionState() {
+  const items = selected.size ? [...selected.values()] : results;
+  $("#slideshow-btn").disabled = !items.some(r => r.type === "image");
+  $("#play-btn").disabled = items.length === 0;
+  // LoRA-Export: nur mit Auswahl + min. ein Bild
+  $("#lora-btn").disabled = selected.size === 0
+    || ![...selected.values()].some(r => r.type === "image");
+  // Manuelle Tag-Leiste nur sichtbar wenn etwas selektiert
+  const mtags = $("#mtags");
+  if (selected.size > 0 && mtagsLoaded) {
+    mtags.classList.add("active");
+    $("#mtags-info").textContent =
+      `${selected.size} ausgewaehlt - Klick = anhaengen, Shift-Klick = entfernen`;
+  } else {
+    mtags.classList.remove("active");
+  }
+}
+
+let mtagsLoaded = false;
+async function loadManualTags() {
+  try {
+    const r = await fetch("/api/tags/manual").then(r=>r.json());
+    const groups = r.groups || {};
+    const wrap = $("#mtags-groups");
+    wrap.innerHTML = "";
+    for (const [name, tags] of Object.entries(groups)) {
+      const g = document.createElement("span");
+      g.className = "group";
+      g.innerHTML = `<span class="label">${escapeHtml(name)}:</span>`;
+      for (const t of tags) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = t;
+        chip.addEventListener("click", (e) => applyManualTag(t, e.shiftKey ? "remove" : "add", chip));
+        g.appendChild(chip);
+      }
+      wrap.appendChild(g);
+    }
+    mtagsLoaded = Object.keys(groups).length > 0;
+  } catch (e) {
+    console.error("manual tags laden fehlgeschlagen", e);
+  }
+}
+
+async function applyManualTag(tag, action, chip) {
+  if (!selected.size) return;
+  const ids = [...selected.keys()];
+  if (chip) chip.style.opacity = "0.5";
+  try {
+    const r = await fetch("/api/tags/apply", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ids, tag, action}),
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      $("#mtags-info").textContent = "Fehler: " + (j.detail || JSON.stringify(j));
+      return;
+    }
+    const verb = action === "remove" ? "entfernt von" : "angehaengt an";
+    $("#mtags-info").textContent =
+      `'${j.tag}' ${verb} ${j.changed} von ${j.selected} Files`;
+    // Manuelle Tags der selektierten Files lokal aktualisieren
+    for (const it of selected.values()) {
+      const cur = (it.manual_tags || []).slice();
+      if (action === "add" && !cur.includes(j.tag)) cur.push(j.tag);
+      if (action === "remove") {
+        const idx = cur.indexOf(j.tag);
+        if (idx >= 0) cur.splice(idx, 1);
+      }
+      it.manual_tags = cur;
+    }
+    render();
+  } finally {
+    if (chip) chip.style.opacity = "";
+  }
+}
+
+$("#search-btn").addEventListener("click", search);
+function updateQClear() {
+  $("#q-wrap").classList.toggle("has-text", !!$("#q").value);
+}
+$("#q").addEventListener("input", updateQClear);
+$("#q").addEventListener("keydown", e => {
+  if (e.key === "Enter") search();
+  else if (e.key === "Escape" && $("#q").value) {
+    $("#q").value = ""; updateQClear(); search();
+  }
+});
+$("#q-clear").addEventListener("click", () => {
+  $("#q").value = ""; updateQClear(); $("#q").focus(); search();
+});
+$("#type").addEventListener("change", search);
+$("#order").addEventListener("change", search);
+$("#select-all").addEventListener("click", () => {
+  for (const r of results) selected.set(r.id, r);
+  render(); updatePageBar();
+});
+$("#clear-sel").addEventListener("click", () => {
+  selected.clear(); render(); updatePageBar();
+});
+
+// ---- Setup panel ----
+$("#toggle-setup").addEventListener("click", () => $("#setup").classList.toggle("active"));
+
+async function loadSettings() {
+  const s = await fetch("/api/settings").then(r=>r.json());
+  $("#s-root").value     = s.root || "";
+  $("#s-limit").value    = s.limit ?? "";
+  $("#s-workers").value  = s.workers ?? 4;
+  $("#s-only").value     = s.only || "";
+  $("#s-retry").checked  = !!s.retry_errors;
+  $("#s-retag").checked  = !!s.retag;
+  await loadEndpoints();
+}
+
+async function loadEndpoints() {
+  try {
+    const r = await fetch("/api/endpoints").then(r=>r.json());
+    const eps = r.endpoints || [];
+    if (!eps.length) {
+      $("#ep-list").innerHTML = '<div style="color:#888">keine Endpoints konfiguriert</div>';
+      return;
+    }
+    $("#ep-list").innerHTML = eps.map(ep => `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #2a2a2a">
+        <input type="checkbox" data-label="${escapeHtml(ep.label)}"
+               ${ep.enabled ? "checked" : ""} class="ep-toggle"
+               style="width:18px;height:18px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:bold">${escapeHtml(ep.label)}</div>
+          <div style="font-family:monospace;font-size:0.85rem;color:#aaa;
+                      white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+               title="${escapeHtml(ep.endpoint + ' @ ' + ep.model)}">
+            ${escapeHtml(ep.endpoint)} → ${escapeHtml(ep.model)}
+          </div>
+        </div>
+      </div>`).join("");
+    document.querySelectorAll(".ep-toggle").forEach(cb => {
+      cb.addEventListener("change", async () => {
+        const label = cb.dataset.label;
+        const enabled = cb.checked;
+        const r = await fetch("/api/endpoints/toggle", {method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({label, enabled})});
+        if (!r.ok) cb.checked = !enabled;  // Rollback bei Fehler
+      });
+    });
+  } catch(e) {
+    $("#ep-list").innerHTML = `<div style="color:#f88">Fehler: ${e}</div>`;
+  }
+}
+
+function gatherSettings() {
+  const out = {
+    root: $("#s-root").value.trim(),
+    limit: $("#s-limit").value === "" ? null : Number($("#s-limit").value),
+    workers: Number($("#s-workers").value) || 4,
+    only: $("#s-only").value,
+    retry_errors: $("#s-retry").checked,
+    retag: $("#s-retag").checked,
+  };
+  return out;
+}
+
+async function saveSettings() {
+  const r = await fetch("/api/settings", {method:"POST",
+       headers:{"Content-Type":"application/json"},
+       body: JSON.stringify(gatherSettings())});
+  if (r.ok) { $("#s-msg").textContent = "gespeichert"; setTimeout(()=>$("#s-msg").textContent="", 2000); loadStats(); }
+  else { $("#s-msg").textContent = "Fehler beim Speichern"; }
+}
+$("#s-save").addEventListener("click", saveSettings);
+
+function showMsg(text, color) {
+  const el = $("#s-msg");
+  el.textContent = text;
+  el.style.color = color || "#888";
+}
+
+async function llmTest() {
+  const t0 = Date.now();
+  let timer = setInterval(() => {
+    const s = ((Date.now()-t0)/1000).toFixed(0);
+    showMsg(`teste alle aktiven Endpoints... ${s}s`, "#888");
+  }, 500);
+  showMsg("teste alle aktiven Endpoints... 0s", "#888");
+  try {
+    const r = await fetch("/api/llm/check", {method:"POST",
+        headers:{"Content-Type":"application/json"}, body: "{}"});
+    clearInterval(timer);
+    const j = await r.json();
+    if (j.endpoints) {
+      const lines = j.endpoints.map(ep => {
+        const t = ep.timings || {};
+        const tag = ep.ok ? "✓" : "✗";
+        const detail = ep.ok
+          ? `${ep.label}: ok (chat=${t.chat_s ?? "?"}s)`
+          : `${ep.label}: ${ep.error || "fehler"}`;
+        return `${tag} ${detail}`;
+      });
+      showMsg(lines.join("  |  "), j.ok ? "#8d8" : "#f88");
+    } else {
+      const t = j.timings || {};
+      if (j.ok) showMsg(`LLM ok (chat=${t.chat_s ?? "?"}s)`, "#8d8");
+      else showMsg("LLM-Fehler: " + (j.error || "?"), "#f88");
+    }
+  } catch (e) {
+    clearInterval(timer);
+    showMsg("Test fehlgeschlagen: " + e, "#f88");
+  }
+}
+$("#s-test").addEventListener("click", llmTest);
+$("#s-rescan").addEventListener("click", async () => {
+  showMsg("starte Re-Scan...", "#888");
+  const r = await fetch("/api/rescan", {method:"POST"});
+  if (r.ok) {
+    showMsg("Re-Scan laeuft, siehe Log-Panel", "#8d8");
+    $("#log-panel").classList.add("active");
+  } else {
+    showMsg("Re-Scan Fehler: " + await r.text(), "#f88");
+  }
+});
+$("#s-optimize").addEventListener("click", async () => {
+  showMsg("optimiere DB (VACUUM + ANALYZE)...", "#888");
+  try {
+    const r = await fetch("/api/db/optimize", {method:"POST"});
+    const j = await r.json();
+    if (j.ok) {
+      const mb = (n) => (n/1024/1024).toFixed(1);
+      showMsg(`DB optimiert in ${j.elapsed_s}s. `
+              + `Groesse: ${mb(j.size_before)} MB -> ${mb(j.size_after)} MB`,
+              "#8d8");
+    } else {
+      showMsg("DB-Optimize Fehler: " + JSON.stringify(j), "#f88");
+    }
+  } catch (e) {
+    showMsg("Fehler: " + e, "#f88");
+  }
+});
+$("#s-normalize").addEventListener("click", async () => {
+  showMsg("normalisiere...", "#888");
+  try {
+    const r = await fetch("/api/normalize", {method:"POST"});
+    const j = await r.json();
+    if (j.ok) {
+      showMsg(`normalisiert: ${j.changed} von ${j.scanned} Files geaendert ` +
+              `(${j.synonyms} Synonym-Eintraege)`, "#8d8");
+      search();  // Treffer neu laden
+    } else {
+      showMsg("Fehler: " + (j.detail || JSON.stringify(j)), "#f88");
+    }
+  } catch (e) {
+    showMsg("Fehler: " + e, "#f88");
+  }
+});
+
+$("#s-start").addEventListener("click", async () => {
+  await saveSettings();
+  showMsg("Pre-flight Check...", "#888");
+  const r = await fetch("/api/tagger/start",
+      {method:"POST", headers:{"Content-Type":"application/json"}, body: "{}"});
+  if (!r.ok) {
+    let detail = "";
+    try {
+      const j = await r.json();
+      if (j.detail && typeof j.detail === "object") {
+        detail = j.detail.error || JSON.stringify(j.detail);
+        if (j.detail.available_models && j.detail.available_models.length) {
+          detail += "  | available: " + j.detail.available_models.slice(0,5).join(", ");
+        }
+      } else detail = j.detail || JSON.stringify(j);
+    } catch { detail = await r.text(); }
+    showMsg("Start abgebrochen: " + detail, "#f88");
+    return;
+  }
+  showMsg("Tagger gestartet", "#8d8");
+  $("#log-panel").classList.add("active");
+  setTimeout(()=>showMsg("", "#888"), 4000);
+});
+$("#s-stop").addEventListener("click", async () => {
+  await fetch("/api/tagger/stop", {method:"POST"});
+  $("#s-msg").textContent = "Stop angefordert";
+  setTimeout(()=>$("#s-msg").textContent="", 2000);
+});
+
+// ---- Directory picker ----
+let pickerPath = "";
+async function openPicker(start) {
+  const r = await fetch("/api/listdir?path=" + encodeURIComponent(start || "")).then(r=>r.json());
+  pickerPath = r.path;
+  $("#picker-path").textContent = r.path;
+  const ul = $("#picker-list");
+  ul.innerHTML = "";
+  if (r.parent && r.parent !== r.path) {
+    const li = document.createElement("li");
+    li.className = "parent"; li.textContent = ".. (uebergeordnet)";
+    li.onclick = () => openPicker(r.parent); ul.appendChild(li);
+  }
+  for (const e of r.entries) {
+    const li = document.createElement("li");
+    li.textContent = e.name + "/";
+    li.onclick = () => openPicker(e.path); ul.appendChild(li);
+  }
+  $("#picker").classList.add("active");
+}
+$("#s-browse").addEventListener("click", () => openPicker($("#s-root").value || ""));
+$("#picker-cancel").addEventListener("click", () => $("#picker").classList.remove("active"));
+$("#picker-pick").addEventListener("click", () => {
+  $("#s-root").value = pickerPath;
+  $("#picker").classList.remove("active");
+});
+
+// ---- Live status + log ----
+async function loadStatus() {
+  try {
+    const s = await fetch("/api/status").then(r=>r.json());
+    if (s.no_root) { $("#status-line").textContent = "kein Wurzelverzeichnis gesetzt"; return; }
+    const c = s.counts || {};
+    const proc = (s.processing || []).length;
+    const pending = c.pending || 0, done = c.done || 0, err = c.error || 0;
+    const rate = (s.rate_per_sec || 0);
+    const eta = s.eta_minutes;
+    $("#pulse").className = "pulse" + (proc > 0 ? "" : " idle");
+    $("#status-line").textContent =
+      `done=${done}  pending=${pending}  processing=${proc}  error=${err}  ` +
+      `| ${rate.toFixed(2)}/s` +
+      (eta != null ? `  | ETA ${eta < 60 ? eta.toFixed(1)+"min" : (eta/60).toFixed(1)+"h"}` : "");
+    const now = s.now;
+    $("#status-active").innerHTML = (s.processing||[]).length
+      ? s.processing.map(p => `<li><span class="age">${fmtAge(now-p.started_at)}</span>${escapeHtml(p.rel_path)}</li>`).join("")
+      : '<li style="color:#555">- (nichts)</li>';
+    $("#status-done").innerHTML = (s.recent_done||[]).length
+      ? s.recent_done.map(p => `<li><span class="age">${fmtAge(now-p.tagged_at)}</span>${escapeHtml(p.rel_path)}</li>`).join("")
+      : '<li style="color:#555">-</li>';
+    $("#status-err").innerHTML = (s.recent_err||[]).length
+      ? s.recent_err.map(p => `<li class="err" title="${escapeHtml(p.error)}">${escapeHtml(p.rel_path)}</li>`).join("")
+      : '<li style="color:#555">-</li>';
+  } catch (e) { $("#status-line").textContent = "Status-API Fehler"; }
+}
+
+let logSince = 0;
+async function loadLog() {
+  try {
+    const r = await fetch("/api/tagger/log?since=" + logSince).then(r=>r.json());
+    const panel = $("#log-panel");
+    const wasAtBottom = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 20;
+    for (const ln of (r.lines || [])) {
+      const div = document.createElement("div");
+      div.className = "line" + (ln.includes(" ERR ") ? " err" : ln.includes(" OK ") ? " ok" : "");
+      div.textContent = ln;
+      panel.appendChild(div);
+    }
+    logSince = r.total;
+    if (wasAtBottom) panel.scrollTop = panel.scrollHeight;
+    $("#s-start").disabled = !!r.running;
+    $("#s-stop").disabled  = !r.running;
+    if (r.running && !$("#log-panel").classList.contains("active"))
+      $("#log-panel").classList.add("active");
+  } catch (e) {}
+}
+$("#toggle-log").addEventListener("click", () => $("#log-panel").classList.toggle("active"));
+
+// ---- Slideshow ----
+let slideTimer = null;
+let slidePaused = false;
+let slidePlaylist = [];   // serielle Referenz-Reihenfolge (filtered images)
+let slideOrder    = [];   // aktuelle Wiedergabe-Reihenfolge (= playlist oder shuffle)
+let slideIdx      = 0;
+let slideMode     = "serial";   // "serial" | "random"
+
+function activeImageItems() {
+  const items = selected.size ? [...selected.values()] : results;
+  return items.filter(r => r.type === "image");
+}
+
+async function fetchAllImageHits() {
+  const params = new URLSearchParams({
+    q: $("#q").value,
+    type: "image",          // Slideshow ist nur fuer Bilder
+    order: $("#order").value,
+  });
+  const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
+  return r.items || [];
+}
+
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+let slideExpanding = false;   // True solange Hintergrund-Vollladen laeuft
+
+function startSlideshowAt(item) {
+  // Bei Auswahl: nur die selektierten Bilder, fertig (kein Hintergrund-Laden).
+  // Sonst: sofort mit aktueller Seite oeffnen, danach alle Treffer im
+  // Hintergrund nachladen und die Playlist nahtlos erweitern.
+  if (selected.size) {
+    const imgs = [...selected.values()].filter(r => r.type === "image");
+    if (!imgs.length) return;
+    _initSlideshow(imgs, item, /*background=*/null);
+    return;
+  }
+  const initial = results.filter(r => r.type === "image");
+  if (!initial.length) {
+    // aktuelle Seite hat keine Bilder - direkt voll laden
+    _initSlideshow([], item, fetchAllImageHits());
+    return;
+  }
+  _initSlideshow(initial, item, fetchAllImageHits());
+}
+
+function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
+  // Initial-Playlist setzen
+  slidePlaylist = initialImgs;
+  slideMode = "serial";
+  slideOrder = slidePlaylist.slice();
+  slideIdx = clickedItem
+    ? slideOrder.findIndex(r => r.id === clickedItem.id)
+    : 0;
+  if (slideIdx < 0) slideIdx = 0;
+  slidePaused = true;
+  slideTextOn = true;     // Default: Text-Overlay an
+  $("#slide-pause").textContent = "Play";
+  $("#slide-mode").textContent  = "Serial";
+  $("#slideshow").classList.add("active");
+  buildSlideMTagBar();    // einmalig Tag-Buttons bauen
+  if (slideOrder.length) showSlide();
+  else $("#slide-info").textContent = "lade Trefferliste...";
+
+  // Hintergrund-Vollladen, falls promise gegeben
+  if (allImgsPromise) {
+    slideExpanding = true;
+    allImgsPromise.then(full => {
+      slideExpanding = false;
+      if (!$("#slideshow").classList.contains("active")) return; // Slideshow zu
+      _expandPlaylist(full);
+    }).catch(e => { slideExpanding = false; console.error("bg fetch", e); });
+  }
+}
+
+function _expandPlaylist(full) {
+  // Was wird gerade angezeigt? - merken, dann Liste austauschen, Index suchen
+  const cur = slideOrder[slideIdx];
+  slidePlaylist = full;
+  if (slideMode === "random" && cur) {
+    // anker behalten, rest shuffle
+    const rest = slidePlaylist.filter(r => r.id !== cur.id);
+    slideOrder = [cur, ...shuffled(rest)];
+    slideIdx = 0;
+  } else {
+    slideOrder = slidePlaylist.slice();
+    slideIdx = cur ? slideOrder.findIndex(r => r.id === cur.id) : 0;
+    if (slideIdx < 0) slideIdx = 0;
+  }
+  // Info-Zeile aktualisieren - showSlide laedt aber kein neues Bild
+  showSlide();
+}
+
+function startSlideshow() {
+  startSlideshowAt(null);
+}
+
+// Auto-hide der Info-Leiste: bei Mouse-Move kurz zeigen, dann ausblenden
+let _slideChromeTimer = null;
+function showSlideChrome() {
+  const sl = $("#slideshow");
+  sl.classList.add("show-chrome");
+  clearTimeout(_slideChromeTimer);
+  _slideChromeTimer = setTimeout(() => {
+    sl.classList.remove("show-chrome");
+  }, 2000);
+}
+$("#slideshow").addEventListener("mousemove", showSlideChrome);
+
+function toggleSlideMode() {
+  if (!slideOrder.length) return;
+  const cur = slideOrder[slideIdx];
+  if (slideMode === "serial") {
+    // -> random: shuffle, aktuelles Bild bleibt vorne
+    const rest = slidePlaylist.filter(r => r.id !== cur.id);
+    slideOrder = [cur, ...shuffled(rest)];
+    slideIdx = 0;
+    slideMode = "random";
+    $("#slide-mode").textContent = "Random";
+  } else {
+    // -> serial: zurueck zur Original-Reihenfolge, an Position des aktuellen Bildes
+    slideOrder = slidePlaylist.slice();
+    slideIdx = slideOrder.findIndex(r => r.id === cur.id);
+    if (slideIdx < 0) slideIdx = 0;
+    slideMode = "serial";
+    $("#slide-mode").textContent = "Serial";
+  }
+  showSlide();
+  scheduleNext();
+}
+
+let slideRot = 0;   // 0, 90, 180, 270 Grad
+let slideTextOn = true;   // Default: Text-Overlay AN
+const _metaCache = new Map();   // id -> {description, tags, manual_tags, path}
+let _slideMTagsBuilt = false;
+
+async function buildSlideMTagBar() {
+  if (_slideMTagsBuilt) return;
+  let tags = [];
+  try {
+    const r = await fetch("/api/tags/manual").then(r=>r.json());
+    const seen = new Set();
+    for (const list of Object.values(r.groups || {})) {
+      for (const t of (list || [])) {
+        const tt = String(t).trim().toLowerCase();
+        if (tt && !seen.has(tt)) { seen.add(tt); tags.push(tt); }
+      }
+    }
+  } catch(e) { console.warn("manual tags load failed:", e); }
+  const bar = $("#slide-mtag-bar");
+  if (!tags.length) {
+    bar.innerHTML = `<div style="color:#888;font-size:0.85rem;
+                                 background:rgba(0,0,0,.6);padding:4px 8px;
+                                 border-radius:12px">
+      keine manuellen Tags definiert (manual_tags.json)
+    </div>`;
+    _slideMTagsBuilt = true;
+    return;
+  }
+  bar.innerHTML = tags.map(t =>
+    `<button class="slide-mtag" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</button>`
+  ).join("");
+  bar.querySelectorAll(".slide-mtag").forEach(b => {
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const it = slideOrder[slideIdx];
+      if (!it) return;
+      const tag = b.dataset.tag;
+      const isActive = b.classList.contains("active");
+      const action = isActive ? "remove" : "add";
+      // optimistisch toggeln
+      b.classList.toggle("active");
+      try {
+        await fetch("/api/tags/apply", {method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ids: [it.id], tag, action})});
+        _metaCache.delete(it.id);   // cache invalidieren
+        if (slideTextOn) updateSlideText();
+      } catch(err) {
+        // rollback bei Fehler
+        b.classList.toggle("active");
+        console.error("tag apply failed:", err);
+      }
+    });
+  });
+  _slideMTagsBuilt = true;
+}
+
+async function updateSlideMTagState() {
+  const it = slideOrder[slideIdx];
+  if (!it) return;
+  const m = await fetchMeta(it.id);
+  const applied = new Set(m?.manual_tags || []);
+  $("#slide-mtag-bar").querySelectorAll(".slide-mtag").forEach(b => {
+    b.classList.toggle("active", applied.has(b.dataset.tag));
+  });
+}
+
+async function fetchMeta(id) {
+  if (_metaCache.has(id)) return _metaCache.get(id);
+  try {
+    const m = await fetch(`/api/meta/${id}`).then(r=>r.json());
+    _metaCache.set(id, m);
+    return m;
+  } catch(e) { return null; }
+}
+
+async function updateSlideText() {
+  const el = $("#slide-text");
+  if (!slideTextOn) { el.classList.remove("active"); return; }
+  const it = slideOrder[slideIdx];
+  if (!it) { el.classList.remove("active"); return; }
+  el.classList.add("active");
+  el.innerHTML = "<em>laedt...</em>";
+  const m = await fetchMeta(it.id);
+  if (!m) { el.innerHTML = "<em>(keine Daten)</em>"; return; }
+  // pruefen: passt das Meta noch zum aktuell sichtbaren Slide?
+  const cur = slideOrder[slideIdx];
+  if (!cur || cur.id !== it.id) return;
+  const tagsLine = (m.tags || []).join(", ");
+  const mtagsLine = (m.manual_tags || []).join(", ");
+  el.innerHTML = `
+    <div>${escapeHtml(m.description || "(keine Beschreibung)")}</div>
+    ${tagsLine ? `<div class="st-tags">${escapeHtml(tagsLine)}</div>` : ""}
+    ${mtagsLine ? `<div class="st-mtags">★ ${escapeHtml(mtagsLine)}</div>` : ""}
+  `;
+}
+
+function applySlideRot() {
+  const img = $("#slide-img");
+  img.classList.remove("rot90", "rot180", "rot270");
+  if (slideRot === 90)  img.classList.add("rot90");
+  if (slideRot === 180) img.classList.add("rot180");
+  if (slideRot === 270) img.classList.add("rot270");
+  img.style.transform = `rotate(${slideRot}deg)`;
+}
+
+function showSlide() {
+  const it = slideOrder[slideIdx];
+  if (!it) {
+    $("#slide-info").textContent = "(lade...)";
+    return;
+  }
+  slideRot = 0;          // beim Bildwechsel Rotation zuruecksetzen
+  applySlideRot();
+  // src nur setzen wenn sich das Bild geaendert hat (vermeidet Reload bei Expand)
+  const expectedSrc = "/file/" + it.id;
+  const img = $("#slide-img");
+  if (!img.src.endsWith(expectedSrc)) img.src = expectedSrc;
+  const expand = slideExpanding ? "  (lade weitere...)" : "";
+  $("#slide-info").textContent =
+    `[${slideIdx+1}/${slideOrder.length}] ${slideMode}${expand}  -  ${it.path}`;
+  if (slideTextOn) updateSlideText();
+  updateSlideMTagState();
+}
+function scheduleNext() {
+  clearTimeout(slideTimer);
+  if (slidePaused) return;
+  const delay = Math.max(1, parseInt($("#slide-delay").value) || 4) * 1000;
+  slideTimer = setTimeout(nextSlide, delay);
+}
+function nextSlide() { slideIdx = (slideIdx+1) % slideOrder.length; showSlide(); scheduleNext(); }
+function prevSlide() { slideIdx = (slideIdx-1+slideOrder.length) % slideOrder.length; showSlide(); scheduleNext(); }
+function scrollToCard(id) {
+  const card = document.querySelector(`.card[data-id="${id}"]`);
+  if (!card) return false;
+  card.scrollIntoView({behavior: "smooth", block: "center"});
+  card.classList.add("highlight");
+  setTimeout(() => card.classList.remove("highlight"), 5000);
+  return true;
+}
+
+async function closeSlideshow() {
+  const lastId = slideOrder[slideIdx]?.id;
+  clearTimeout(slideTimer);
+  $("#slideshow").classList.remove("active");
+  $("#slide-img").src = "";
+  $("#slide-text").classList.remove("active");
+  slideTextOn = false;
+  if (lastId == null) return;
+  console.log("[closeSlideshow] lastId =", lastId);
+  // 1) Bild bereits auf aktueller Seite?
+  if (scrollToCard(lastId)) {
+    console.log("[closeSlideshow] -> bereits sichtbar, gescrollt");
+    return;
+  }
+  // 2) Server fragt: an welcher Position in der aktuellen Suche liegt das Bild?
+  const params = new URLSearchParams({
+    file_id: String(lastId),
+    q:    $("#q").value,
+    type: $("#type").value,
+    order: $("#order").value,
+  });
+  let offset = -1;
+  try {
+    const resp = await fetch("/api/search/locate?" + params);
+    if (!resp.ok) {
+      console.warn("[closeSlideshow] /api/search/locate liefert " + resp.status
+                   + " - serve.py neu starten?");
+    } else {
+      const j = await resp.json();
+      offset = j.offset;
+      console.log("[closeSlideshow] locate -> offset", offset,
+                  "(scanned", j.total_scanned, ")");
+    }
+  } catch (e) {
+    console.warn("[closeSlideshow] locate fehlgeschlagen:", e);
+  }
+  if (offset < 0) {
+    console.log("[closeSlideshow] Bild nicht im aktuellen Suchresultat");
+    return;
+  }
+  const pageSize = parseInt($("#limit-q").value) || 200;
+  const targetOffset = Math.floor(offset / pageSize) * pageSize;
+  console.log("[closeSlideshow] springe zu offset", targetOffset);
+  await search({offset: targetOffset, reset: false, scrollTop: false});
+  // DOM-Render abwarten
+  setTimeout(() => {
+    const ok = scrollToCard(lastId);
+    console.log("[closeSlideshow] scrollToCard ->", ok);
+  }, 150);
+}
+
+$("#slideshow-btn").addEventListener("click", startSlideshow);
+$("#slide-next").addEventListener("click", nextSlide);
+$("#slide-prev").addEventListener("click", prevSlide);
+$("#slide-close").addEventListener("click", closeSlideshow);
+$("#slide-mode").addEventListener("click", toggleSlideMode);
+$("#slide-fs").addEventListener("click", toggleFullscreen);
+$("#slide-pause").addEventListener("click", () => {
+  slidePaused = !slidePaused;
+  $("#slide-pause").textContent = slidePaused ? "Play" : "Pause";
+  if (!slidePaused) scheduleNext(); else clearTimeout(slideTimer);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!$("#slideshow").classList.contains("active")) return;
+  if      (e.key === "Escape")     closeSlideshow();
+  else if (e.key === "ArrowRight") nextSlide();
+  else if (e.key === "ArrowLeft")  prevSlide();
+  else if (e.key === " ")          { e.preventDefault(); nextSlide(); }
+  else if (e.key === "Backspace")  { e.preventDefault(); prevSlide(); }
+  else if (e.key === "p" || e.key === "P") $("#slide-pause").click();
+  else if (e.key === "r" || e.key === "R") toggleSlideMode();
+  else if (e.key === "l" || e.key === "L") {
+    slideRot = (slideRot + 90) % 360;
+    applySlideRot();
+  }
+  else if (e.key === "o" || e.key === "O") {
+    const it = slideOrder[slideIdx];
+    if (it) fetch("/api/open", {method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify({id: it.id})});
+  }
+  else if (e.key === "f" || e.key === "F") toggleFullscreen();
+  else if (e.key === "t" || e.key === "T") {
+    slideTextOn = !slideTextOn;
+    updateSlideText();
+  }
+  else if (e.key === "h" || e.key === "H") {
+    // hart ein/aus fuer den Pfad-Balken
+    $("#slideshow").classList.toggle("hide-info");
+  }
+});
+
+function toggleFullscreen() {
+  const el = $("#slideshow");
+  if (!document.fullscreenElement) {
+    (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+  }
+}
+
+$("#play-btn").addEventListener("click", async () => {
+  const items = selected.size ? [...selected.values()] : results;
+  if (!items.length) return;
+  await fetch("/api/play", {method:"POST", headers:{"Content-Type":"application/json"},
+                            body: JSON.stringify({ids: items.map(i=>i.id)})});
+});
+
+// ---- LoRA Export ----
+$("#lora-btn").addEventListener("click", () => {
+  const imgs = [...selected.values()].filter(r => r.type === "image");
+  const vids = [...selected.values()].filter(r => r.type === "video");
+  $("#lora-summary").textContent =
+    `${imgs.length} Bilder ausgewaehlt`
+    + (vids.length ? `   (${vids.length} Videos werden uebersprungen)` : "");
+  $("#lora-result").innerHTML = "";
+  // Default-Ordnername mit Zeitstempel
+  const now = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const def = `lora-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`
+            + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  $("#lora-name").value = def;
+  $("#lora-modal").style.display = "flex";
+});
+$("#lora-cancel").addEventListener("click", () => {
+  $("#lora-modal").style.display = "none";
+});
+$("#lora-do").addEventListener("click", async () => {
+  const ids = [...selected.values()].filter(r => r.type === "image").map(r => r.id);
+  if (!ids.length) return;
+  const body = {
+    ids,
+    dest_name:           $("#lora-name").value.trim(),
+    trigger_word:        $("#lora-trigger").value.trim(),
+    rename_seq:          $("#lora-rename").checked,
+    include_auto_tags:   $("#lora-incl-auto").checked,
+    include_description: $("#lora-incl-desc").checked,
+    max_tags:            Number($("#lora-maxtags").value) || 0,
+  };
+  $("#lora-result").innerHTML = "<em>exportiere...</em>";
+  $("#lora-do").disabled = true;
+  try {
+    const r = await fetch("/api/lora-export", {method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(body)});
+    const j = await r.json();
+    if (j.ok) {
+      $("#lora-result").innerHTML =
+        `<div style="color:#8d8">Fertig: ${j.exported} Bilder + Sidecars `
+        + `${j.skipped ? `(${j.skipped} uebersprungen)` : ""}</div>`
+        + `<div style="color:#aaa;margin-top:4px;font-family:monospace;font-size:0.85rem;word-break:break-all">${escapeHtml(j.dest)}</div>`;
+    } else {
+      $("#lora-result").innerHTML =
+        `<div style="color:#f88">Fehler: ${escapeHtml(JSON.stringify(j))}</div>`;
+    }
+  } catch (e) {
+    $("#lora-result").innerHTML = `<div style="color:#f88">Fehler: ${e}</div>`;
+  } finally {
+    $("#lora-do").disabled = false;
+  }
+});
+
+// ---- Init ----
+(async () => {
+  await loadSettings();
+  const s = await fetch("/api/settings").then(r=>r.json());
+  if (!s.root) $("#setup").classList.add("active");  // open setup if no root yet
+  loadStats(); loadStatus(); loadLog(); loadManualTags(); search();
+  setInterval(loadStatus, 2000);
+  setInterval(loadLog, 1500);
+  setInterval(loadStats, 5000);
+})();
+</script>
+</body>
+</html>

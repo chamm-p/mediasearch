@@ -1,0 +1,33 @@
+# mediasearch config - Vorlage. Kopiere zu config.toml und passe an.
+# Wird automatisch von tag.py und serve.py gelesen (neben den Scripts).
+
+# --- LLM Endpoints ---
+# Zwei Schreibweisen:
+# 1) einzelner Endpoint per [llm] (siehe unten)
+# 2) mehrere via [[llm.endpoints]] - dann werden sie nach 'least-busy'
+#    verteilt: schnellere Endpoints bekommen automatisch mehr Last.
+
+[llm]
+# Globale Defaults; werden von einzelnen [[llm.endpoints]]-Bloecken
+# uebernommen wenn dort api_key/model nicht gesetzt sind.
+api_key = ""
+
+[[llm.endpoints]]
+endpoint = "http://localhost:8000/v1"
+model    = "qwen2.5-vl-7b-instruct"
+api_key  = ""
+
+# Beispiel: zweiter Endpoint
+# [[llm.endpoints]]
+# endpoint = "http://192.168.1.10:1234/v1"
+# model    = "qwen2-vl-7b-instruct"
+# api_key  = ""
+
+[tag]
+workers       = 4
+retry_errors  = false
+# limit       = 500     # auskommentiert = unlimitiert; per CLI --limit N setzbar
+
+[serve]
+host = "127.0.0.1"          # 0.0.0.0 fuer LAN-Zugriff (kein Auth - vorsicht!)
+port = 8765
