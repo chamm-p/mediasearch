@@ -271,9 +271,10 @@
        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
        font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.7rem; }
   /* Globaler Hover-Popup (position: fixed) - JS setzt top/left/width
-     beim Mouse-Enter auf einer Karte. Liegt ueber dem Grid-Overflow. */
+     beim Mouse-Enter auf einer Karte. Liegt ueber dem Grid-Overflow
+     UND ueber Modals (Doubletten etc., die z-index 60 haben). */
   #card-pop {
-    display: none; position: fixed; z-index: 50;
+    display: none; position: fixed; z-index: 70;
     background: var(--bg-2); border: 1px solid var(--line-soft);
     border-radius: var(--radius-sm);
     padding: 10px 12px; font-size: 0.88rem; color: var(--text); line-height: 1.5;
