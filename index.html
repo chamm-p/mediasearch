@@ -317,6 +317,25 @@
   #slide-text.active { display: block; }
   #slide-text .st-tags { color: #8ad; margin-top: 6px; font-size: 0.85rem; }
   #slide-text .st-mtags { color: #f8a; margin-top: 4px; font-size: 0.85rem; }
+  /* Lade-Indikator in der Slideshow (waehrend Hintergrund-Liste geholt wird) */
+  #slide-loading {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    background: rgba(20,20,20,.92); color: var(--text);
+    border: 1px solid var(--accent-2); border-radius: 16px;
+    padding: 6px 14px; font-size: 0.85rem; z-index: 3;
+    display: none; align-items: center; gap: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.6);
+  }
+  #slide-loading.active { display: flex; }
+  #slide-loading .spinner {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid rgba(106,170,255,0.3);
+    border-top-color: var(--accent-2);
+    border-radius: 50%;
+    animation: spinner-rot 0.8s linear infinite;
+  }
+  @keyframes spinner-rot { to { transform: rotate(360deg); } }
+
   /* Manuelle Tag-Leiste oben links */
   #slide-mtag-bar { position: absolute; top: 8px; left: 8px;
        display: flex; flex-wrap: wrap; gap: 6px; max-width: 60vw; z-index: 2; }
@@ -557,6 +576,10 @@
 <!-- Slideshow -->
 <div id="slideshow">
   <img id="slide-img">
+  <div id="slide-loading">
+    <span class="spinner"></span>
+    <span>Lade Pfad-Reihenfolge ...</span>
+  </div>
   <div id="slide-mtag-bar"></div>
   <div id="slide-text"></div>
   <div class="info" id="slide-info"></div>
@@ -1420,11 +1443,17 @@ function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
   // Hintergrund-Vollladen, falls promise gegeben
   if (allImgsPromise) {
     slideExpanding = true;
+    $("#slide-loading").classList.add("active");
     allImgsPromise.then(full => {
       slideExpanding = false;
+      $("#slide-loading").classList.remove("active");
       if (!$("#slideshow").classList.contains("active")) return; // Slideshow zu
       _expandPlaylist(full);
-    }).catch(e => { slideExpanding = false; console.error("bg fetch", e); });
+    }).catch(e => {
+      slideExpanding = false;
+      $("#slide-loading").classList.remove("active");
+      console.error("bg fetch", e);
+    });
   }
 }
 
@@ -1631,6 +1660,7 @@ async function closeSlideshow() {
   $("#slideshow").classList.remove("active");
   $("#slide-img").src = "";
   $("#slide-text").classList.remove("active");
+  $("#slide-loading").classList.remove("active");
   slideTextOn = false;
   if (lastId == null) return;
   console.log("[closeSlideshow] lastId =", lastId);
