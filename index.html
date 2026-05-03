@@ -971,19 +971,22 @@ async function loadLog() {
     if (wasAtBottom) panel.scrollTop = panel.scrollHeight;
     $("#s-start").disabled = !!r.running;
     $("#s-stop").disabled  = !r.running;
-    if (r.running && !$("#drawer").classList.contains("open"))
+    if (r.running && !$("#drawer").classList.contains("open") && !_userClosedDrawer)
       openDrawer("pane-log");
   } catch (e) {}
 }
 // ---- Drawer ----
+let _userClosedDrawer = false;   // verhindert Auto-Reopen waehrend Tagger laeuft
 function openDrawer(paneId) {
   $("#drawer").classList.add("open");
   $("#activity-pill").classList.add("active");
   if (paneId) selectDrawerPane(paneId);
+  _userClosedDrawer = false;
 }
 function closeDrawer() {
   $("#drawer").classList.remove("open");
   $("#activity-pill").classList.remove("active");
+  _userClosedDrawer = true;
 }
 function selectDrawerPane(paneId) {
   document.querySelectorAll("#drawer .tab").forEach(b =>
