@@ -307,8 +307,8 @@
        pointer-events: none; }
   #slideshow.show-chrome .info { opacity: 1; }
   #slideshow.hide-info .info { display: none !important; }
-  /* Bild-Beschreibung-Overlay (T-Toggle) - rechts unten */
-  #slide-text { position: absolute; bottom: 40px; right: 8px;
+  /* Bild-Beschreibung-Overlay (T-Toggle) - links unten */
+  #slide-text { position: absolute; bottom: 40px; left: 8px;
        max-width: 420px; max-height: 60vh; overflow: auto;
        color: #eee; font-size: 0.9rem; line-height: 1.4;
        background: rgba(0,0,0,.75); padding: 10px 14px; border-radius: 6px;
@@ -1136,10 +1136,13 @@ function activeImageItems() {
 }
 
 async function fetchAllImageHits() {
+  // Slideshow startet IMMER in Pfad/Name-Reihenfolge - so spielen
+  // Bildserien aus demselben Ordner sequentiell ab. Mit R im Slideshow
+  // kann auf Random umgeschaltet werden.
   const params = new URLSearchParams({
     q: $("#q").value,
-    type: "image",          // Slideshow ist nur fuer Bilder
-    order: $("#order").value,
+    type: "image",
+    order: "path",
   });
   const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
   return r.items || [];

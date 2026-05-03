@@ -312,6 +312,7 @@ class Tagger:
     def __init__(self) -> None:
         self.proc: Optional[subprocess.Popen] = None
         self.log: deque[str] = deque(maxlen=2000)
+        self.log_total: int = 0      # absoluter Lifetime-Counter (steigt monoton)
         self.lock = threading.Lock()
         self.started_at = 0.0
         self.cmd_str = ""
@@ -345,7 +346,8 @@ class Tagger:
             if settings.get("scan_only"):cmd += ["--scan-only"]
             if settings.get("only"):     cmd += ["--only",  settings["only"]]
             self.log.clear()
-            self.log.append(f"$ {' '.join(cmd)}")
+            self.log_total = 0
+            self._append_line(f"$ {' '.join(cmd)}")
             self.cmd_str = " ".join(cmd)
             self.proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -354,19 +356,24 @@ class Tagger:
             self.started_at = time.time()
             threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
 
+    def _append_line(self, line: str) -> None:
+        # WICHTIG: log_total ist Lifetime-Counter, deque rotiert bei maxlen.
+        self.log.append(line)
+        self.log_total += 1
+
     def _reader(self, proc: subprocess.Popen) -> None:
         assert proc.stdout
         for line in proc.stdout:
-            self.log.append(line.rstrip("\n"))
+            self._append_line(line.rstrip("\n"))
         rc = proc.wait()
-        self.log.append(f"-- tagger exited rc={rc} --")
+        self._append_line(f"-- tagger exited rc={rc} --")
 
     def stop(self) -> None:
         with self.lock:
             if not self.is_running():
                 return
             assert self.proc
-            self.log.append("-- stop requested --")
+            self._append_line("-- stop requested --")
             self.proc.terminate()
             try:
                 self.proc.wait(timeout=10)
@@ -374,14 +381,19 @@ class Tagger:
                 self.proc.kill()
 
     def tail(self, since: int = 0) -> tuple[list[str], int]:
-        # log is a deque of last N lines; serve all since `since` index
-        # since = absolute line number across run; we approximate via len.
-        # For simplicity: client sends current-known-length, we send remainder.
+        """`since` ist ABSOLUTER Lifetime-Counter (was Client zuletzt sah).
+        Wir liefern alle Zeilen mit Position >= since, capped durch deque-Inhalt.
+        Wenn Client weit zurueckhaengt und Zeilen schon ueberrollt sind,
+        bekommt er was noch in der deque ist."""
         all_lines = list(self.log)
         n = len(all_lines)
-        if since < 0: since = 0
-        if since > n: since = n
-        return all_lines[since:], n
+        first_in_buffer = self.log_total - n   # absolute idx der ersten Zeile in deque
+        if since < first_in_buffer:
+            since = first_in_buffer            # client hat Zeilen verpasst
+        start = since - first_in_buffer
+        if start < 0: start = 0
+        if start > n: start = n
+        return all_lines[start:], self.log_total
 
 
 tagger = Tagger()
