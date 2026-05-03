@@ -971,8 +971,9 @@ async function loadLog() {
     if (wasAtBottom) panel.scrollTop = panel.scrollHeight;
     $("#s-start").disabled = !!r.running;
     $("#s-stop").disabled  = !r.running;
-    if (r.running && !$("#drawer").classList.contains("open") && !_userClosedDrawer)
-      openDrawer("pane-log");
+    // KEIN Auto-Open mehr beim Polling - der Drawer kommt nur bei explizitem
+    // Klick auf die Pille oder beim Druecken von "Tagging starten"/"Rescan"
+    // hoch. So lassen sich auch laufende Logs ungestoert wegklicken.
   } catch (e) {}
 }
 // ---- Drawer ----
