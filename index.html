@@ -270,20 +270,20 @@
   .card .meta .path { color: var(--text-dim);
        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
        font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.7rem; }
-  /* Hover-Popup mit voller Beschreibung + Tags - oeffnet direkt unter
-     dem Bild und ueberdeckt die abgeschnittene Meta-Zeile */
-  .card .thumb { position: relative; }
-  .card .full { display: none; position: absolute; left: -2px; right: -2px;
-       top: 100%;
-       z-index: 5; background: #1c1c1c; border: 1px solid #555; border-radius: 4px;
-       padding: 10px 12px; font-size: 0.9rem; color: #eee; line-height: 1.5;
-       box-shadow: 0 4px 12px rgba(0,0,0,.6); white-space: normal;
-       max-height: 60vh; overflow: auto; }
-  .card:hover .thumb .full { display: block; }
-  .card .full .full-tags { margin-top: 8px; color: #8ad; font-size: 0.85rem; }
-  .card .full .full-mtags { margin-top: 4px; color: #f8a; font-size: 0.85rem; }
-  .card .full .full-path { margin-top: 8px; color: #888; font-size: 0.8rem;
-       font-family: monospace; word-break: break-all; }
+  /* Globaler Hover-Popup (position: fixed) - JS setzt top/left/width
+     beim Mouse-Enter auf einer Karte. Liegt ueber dem Grid-Overflow. */
+  #card-pop {
+    display: none; position: fixed; z-index: 50;
+    background: var(--bg-2); border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px; font-size: 0.88rem; color: var(--text); line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0,0,0,.6); pointer-events: none;
+    max-height: 60vh; overflow: hidden; }
+  #card-pop.active { display: block; }
+  #card-pop .full-tags  { margin-top: 8px; color: var(--accent-2); font-size: 0.82rem; }
+  #card-pop .full-mtags { margin-top: 4px; color: var(--accent-3); font-size: 0.82rem; }
+  #card-pop .full-path  { margin-top: 8px; color: var(--text-faint); font-size: 0.75rem;
+       font-family: ui-monospace, "SF Mono", Menlo, monospace; word-break: break-all; }
   .empty { padding: 40px; color: #aaa; text-align: center; font-size: 1rem; }
 
   /* slideshow */
@@ -328,11 +328,8 @@
 </style>
 </head>
 <body>
-<!-- versteckter limit-Select - JS setzt den Wert dynamisch je nach Viewport -->
-<select id="limit-q" style="display:none">
-  <option value="50">50</option><option value="200" selected>200</option>
-  <option value="500">500</option><option value="1000">1000</option>
-</select>
+<!-- limit-q: hidden input, Wert wird von computePageSize() gesetzt -->
+<input id="limit-q" type="hidden" value="200">
 <!-- versteckter Stats-Container fuer altes JS -->
 <span id="stats" style="display:none"></span>
 
@@ -445,6 +442,7 @@
   <div id="pane-log" class="drawer-pane"></div>
 </div>
 
+<div id="card-pop"></div>
 <button class="edge-nav left"  id="edge-prev" title="vorherige Seite (Pfeil-links)">&#10094;</button>
 <button class="edge-nav right" id="edge-next" title="naechste Seite (Pfeil-rechts)">&#10095;</button>
 <div class="grid" id="grid"></div>
@@ -616,10 +614,10 @@ $("#edge-next").addEventListener("click", () => $("#page-next").click());
 //   - 1920x1080  -> ~10x8  = 80
 //   - 1366x768   -> ~8x5   = 40
 //   - 3840x2160  -> capped 14x10 = 140 (Karten dann groesser)
-const MIN_CARD_W = 170;
-const MIN_CARD_H = 115;
-const MAX_COLS   = 14;
-const MAX_ROWS   = 10;
+const MIN_CARD_W = 200;
+const MIN_CARD_H = 145;
+const MAX_COLS   = 12;
+const MAX_ROWS   = 8;
 let _lastPageSize = 0;
 function computePageSize() {
   const vw = window.innerWidth;
@@ -663,6 +661,34 @@ window.addEventListener("resize", () => {
   }, 200);
 });
 
+function showCardPop(card, it) {
+  const pop = $("#card-pop");
+  const allTags  = (it.tags || []).join(", ");
+  const allMTags = (it.manual_tags || []).join(", ");
+  pop.innerHTML = `
+    <div>${escapeHtml(it.description || "(keine Beschreibung)")}</div>
+    <div class="full-tags">${escapeHtml(allTags || "(keine auto-tags)")}</div>
+    ${allMTags ? `<div class="full-mtags">★ ${escapeHtml(allMTags)}</div>` : ""}
+    <div class="full-path">${escapeHtml(it.path)}</div>`;
+  const r = card.getBoundingClientRect();
+  const popMaxW = Math.max(r.width, 280);
+  // unterhalb der Karte; falls nicht genug Platz, oberhalb
+  pop.style.left  = r.left + "px";
+  pop.style.width = Math.min(popMaxW, window.innerWidth - r.left - 16) + "px";
+  pop.classList.add("active");
+  // measure + decide above/below
+  const ph = pop.offsetHeight;
+  const spaceBelow = window.innerHeight - 60 - r.bottom;
+  if (spaceBelow >= ph + 4 || spaceBelow > r.top) {
+    pop.style.top    = (r.bottom + 2) + "px";
+    pop.style.bottom = "auto";
+  } else {
+    pop.style.bottom = (window.innerHeight - r.top + 2) + "px";
+    pop.style.top    = "auto";
+  }
+}
+function hideCardPop() { $("#card-pop").classList.remove("active"); }
+
 function render() {
   grid.innerHTML = "";
   empty.style.display = results.length ? "none" : "";
@@ -678,20 +704,13 @@ function render() {
     card.innerHTML = `
       <div class="thumb">
         <img loading="lazy" src="/thumb/${it.id}" onerror="this.style.display='none'">
-        <div class="full">
-          <div>${escapeHtml(it.description || "(keine Beschreibung)")}</div>
-          <div class="full-tags">${escapeHtml(allTags || "(keine auto-tags)")}</div>
-          ${mtags.length ? `<div class="full-mtags">★ ${escapeHtml(allMTags)}</div>` : ""}
-          <div class="full-path">${escapeHtml(it.path)}</div>
-        </div>
       </div>
       <span class="badge ${it.type}">${it.type}</span>
       <div class="meta">
-        <div class="desc">${escapeHtml(it.description || "")}</div>
-        <div class="desc" style="color:#8ad">${escapeHtml(tagsLine)}</div>
-        ${mtags.length ? `<div class="desc" style="color:#f8a">★ ${escapeHtml(mtagsLine)}</div>` : ""}
         <div class="path" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</div>
       </div>`;
+    card.addEventListener("mouseenter", () => showCardPop(card, it));
+    card.addEventListener("mouseleave", hideCardPop);
     card.addEventListener("click", (e) => {
       if (e.shiftKey || e.ctrlKey || e.metaKey) { toggleSel(it, card); return; }
       if (it.type === "image") {
