@@ -469,22 +469,28 @@
 
 <!-- Doubletten Modal -->
 <div id="dupes-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.85);
-     z-index:60;display:none;align-items:flex-start;justify-content:center;
-     overflow:auto;padding:30px 20px">
+     z-index:60;display:none;align-items:center;justify-content:center;
+     padding:20px">
   <div style="background:var(--bg-2);border:1px solid var(--line);border-radius:8px;
-              width:1100px;max-width:95vw;padding:18px 22px;color:var(--text)">
+              width:1100px;max-width:95vw;height:90vh;
+              display:flex;flex-direction:column;color:var(--text);
+              overflow:hidden">
+    <!-- Sticky Header: bleibt oben -->
     <div style="display:flex;justify-content:space-between;align-items:center;
-                margin-bottom:12px">
+                padding:14px 22px 8px;border-bottom:1px solid var(--line-soft);
+                flex-shrink:0">
       <h3 style="margin:0;font-size:1.1rem">Doubletten</h3>
       <button id="dupes-close" style="background:transparent;border:none;
-              color:var(--text-dim);font-size:1.4rem;cursor:pointer">&times;</button>
+              color:var(--text-dim);font-size:1.4rem;cursor:pointer;line-height:1">&times;</button>
     </div>
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;
-                font-size:0.9rem">
+    <!-- Sticky Steuerleiste -->
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+                padding:10px 22px;border-bottom:1px solid var(--line-soft);
+                font-size:0.9rem;background:var(--bg-2);flex-shrink:0">
       <label><input type="radio" name="dupes-mode" value="exact" checked>
         exakt (Dateiinhalt identisch)</label>
       <label><input type="radio" name="dupes-mode" value="near">
-        aehnliche Bilder</label>
+        aehnliche Bilder/Videos</label>
       <label style="margin-left:14px">Threshold (nur near):
         <input id="dupes-thr" type="number" min="0" max="20" value="6"
                style="width:50px;padding:4px;background:var(--bg-3);
@@ -493,7 +499,9 @@
       <button id="dupes-run" class="primary">Suchen</button>
       <span id="dupes-info" style="color:var(--text-dim);margin-left:auto"></span>
     </div>
-    <div id="dupes-result" style="font-size:0.9rem"></div>
+    <!-- Scrollable Resultsarea -->
+    <div id="dupes-result" style="font-size:0.9rem;padding:14px 22px;
+         overflow-y:auto;overflow-x:hidden;flex:1 1 auto;min-height:0"></div>
   </div>
 </div>
 
