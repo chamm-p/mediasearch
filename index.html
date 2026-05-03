@@ -1738,35 +1738,37 @@ function scheduleNext() {
 function nextSlide() { slideIdx = (slideIdx+1) % slideOrder.length; showSlide(); scheduleNext(); }
 function prevSlide() { slideIdx = (slideIdx-1+slideOrder.length) % slideOrder.length; showSlide(); scheduleNext(); }
 let _highlightSafetyTimer = null;
-function _dismissHighlight() {
+let _highlightArmedAt = 0;     // Zeitpunkt-Wachhund: ignoriere Events der ersten ~400ms
+function _dismissHighlight(e) {
+  // Grace period: erst 400ms nach dem Setzen reagieren - sonst frisst
+  // ein nachzuegelndes Esc/Mouse-Event den Marker sofort weg.
+  if (e && (Date.now() - _highlightArmedAt) < 400) return;
   document.querySelectorAll(".card.highlight").forEach(c =>
     c.classList.remove("highlight"));
   document.removeEventListener("mousedown", _dismissHighlight, true);
   document.removeEventListener("keydown",   _dismissHighlight, true);
-  document.removeEventListener("wheel",     _dismissHighlight, true);
   clearTimeout(_highlightSafetyTimer);
   _highlightSafetyTimer = null;
 }
 function _armHighlightDismiss() {
-  // Listener nur einmal aktiv halten
+  _highlightArmedAt = Date.now();
   document.removeEventListener("mousedown", _dismissHighlight, true);
   document.removeEventListener("keydown",   _dismissHighlight, true);
-  document.removeEventListener("wheel",     _dismissHighlight, true);
   document.addEventListener("mousedown", _dismissHighlight, true);
   document.addEventListener("keydown",   _dismissHighlight, true);
-  document.addEventListener("wheel",     _dismissHighlight, true);
-  // Sicherheits-Timeout, falls User minutenlang nichts macht
+  // KEIN wheel-Listener mehr - zu leicht versehentlich getriggert
   clearTimeout(_highlightSafetyTimer);
-  _highlightSafetyTimer = setTimeout(_dismissHighlight, 120000);
+  _highlightSafetyTimer = setTimeout(() => _dismissHighlight(null), 120000);
 }
 
 function scrollToCard(id) {
   const card = document.querySelector(`.card[data-id="${id}"]`);
   if (!card) return false;
-  // bestehende Highlights wegnehmen, neuen Marker setzen
   document.querySelectorAll(".card.highlight").forEach(c =>
     c.classList.remove("highlight"));
-  card.scrollIntoView({behavior: "smooth", block: "center"});
+  // scrollIntoView funktioniert bei overflow:hidden Grids ohnehin nicht;
+  // wir verlassen uns auf das Page-Switching der search()-Aufrufer.
+  try { card.scrollIntoView({behavior: "smooth", block: "center"}); } catch {}
   card.classList.add("highlight");
   _armHighlightDismiss();
   return true;
@@ -1784,10 +1786,27 @@ async function closeSlideshow() {
   console.log("[closeSlideshow] lastId =", lastId);
   // 1) Bild bereits auf aktueller Seite?
   if (scrollToCard(lastId)) {
-    console.log("[closeSlideshow] -> bereits sichtbar, gescrollt");
+    console.log("[closeSlideshow] -> bereits sichtbar");
     return;
   }
-  // 2) Server fragt: an welcher Position in der aktuellen Suche liegt das Bild?
+  // 2) In den gecachten Seiten suchen (bei Random-Sort ist locate unzuverlaessig,
+  //    da der Server bei jeder Anfrage anders mischt)
+  for (const [cachedOffset, entry] of _pageCache.entries()) {
+    if (entry.results && entry.results.some(r => r.id === lastId)) {
+      console.log("[closeSlideshow] in Cache gefunden bei offset", cachedOffset);
+      await search({offset: cachedOffset, reset: false, scrollTop: false});
+      if (scrollToCard(lastId)) return;
+      // Falls scrollToCard fehlschlaegt: rAF retry
+      requestAnimationFrame(() => scrollToCard(lastId));
+      return;
+    }
+  }
+  // 3) Random-Sort? Dann bringt locate nichts - abbrechen.
+  if ($("#order").value === "random") {
+    console.log("[closeSlideshow] random-sort & nicht im cache - kein deterministischer Sprung moeglich");
+    return;
+  }
+  // 4) Server fragt: an welcher Position in der aktuellen Suche liegt das Bild?
   const params = new URLSearchParams({
     file_id: String(lastId),
     q:    $("#q").value,
