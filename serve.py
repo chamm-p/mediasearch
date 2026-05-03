@@ -931,10 +931,20 @@ def serve_file(file_id: int):
 @app.post("/api/open")
 def api_open(payload: dict) -> dict:
     fid = int(payload.get("id", 0))
-    p, _ = _abs_for(fid)
+    p, ftype = _abs_for(fid)
+    # Pro-Typ Viewer aus config.toml; leer -> xdg-open
+    viewers = load_config().get("viewers", {}) or {}
+    cmd_str = (viewers.get(ftype) or "").strip()
+    if cmd_str:
+        import shlex
+        cmd = shlex.split(cmd_str) + [str(p)]
+    else:
+        cmd = ["xdg-open", str(p)]
     try:
-        subprocess.Popen(["xdg-open", str(p)],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except FileNotFoundError as e:
+        raise HTTPException(500, f"viewer nicht gefunden: {cmd[0]} ({e})")
     except Exception as e:
         raise HTTPException(500, f"open failed: {e}")
     return {"ok": True}

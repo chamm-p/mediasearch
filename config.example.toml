@@ -31,3 +31,10 @@ retry_errors  = false
 [serve]
 host = "127.0.0.1"          # 0.0.0.0 fuer LAN-Zugriff (kein Auth - vorsicht!)
 port = 8765
+
+# --- Externe Viewer ---
+# Kommando fuer Klick auf Bild / Video. Leer = xdg-open (System-Default).
+# Beispiele: "qiv -f", "feh --fullscreen", "eog -f", "mpv --fs"
+[viewers]
+image = ""                  # z.B. "qiv -f" fuer Fullscreen
+video = ""                  # z.B. "mpv --fs"
