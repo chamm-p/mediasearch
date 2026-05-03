@@ -1086,18 +1086,26 @@ $("#dupes-run").addEventListener("click", async () => {
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:10px">`;
       for (const m of g.members) {
-        html += `<div data-id="${m.id}" style="border:1px solid var(--line);
+        const fname = (m.path || "").split("/").pop() || m.path;
+        html += `<div class="dup-card" data-id="${m.id}"
+                 data-path="${escapeHtml(m.path)}"
+                 data-size="${m.size||0}"
+                 style="position:relative;border:1px solid var(--line);
                  border-radius:4px;padding:6px;background:var(--bg-2);
-                 max-width:170px;font-size:0.78rem">
-          <img src="/thumb/${m.id}" style="width:150px;height:150px;
-               object-fit:cover;border-radius:3px;cursor:pointer"
+                 width:170px;font-size:0.78rem;flex-shrink:0">
+          <img src="/thumb/${m.id}" style="width:158px;height:158px;
+               object-fit:cover;border-radius:3px;cursor:pointer;display:block"
                onclick="fetch('/api/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:${m.id}})})">
-          <div style="margin-top:4px;color:var(--text-dim);
+          <div style="margin-top:6px;color:var(--text);font-weight:600;
+               white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+               title="${escapeHtml(fname)}">${escapeHtml(fname)}</div>
+          <div style="color:var(--text-dim);font-size:0.72rem;
                white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
                title="${escapeHtml(m.path)}">${escapeHtml(m.path)}</div>
-          <div style="color:var(--text-faint);font-size:0.7rem">${bytes(m.size||0)}</div>
+          <div style="color:var(--accent-2);font-size:0.78rem;
+               margin-top:4px;font-weight:600">${bytes(m.size||0)}</div>
           <button class="dupes-del" data-id="${m.id}" data-path="${escapeHtml(m.path)}"
-                  style="margin-top:4px;width:100%;background:var(--err);
+                  style="margin-top:6px;width:100%;background:var(--err);
                          color:#2a0606;border:none;padding:4px;border-radius:3px;
                          cursor:pointer;font-weight:bold;font-size:0.78rem">
             Loeschen
@@ -1107,6 +1115,34 @@ $("#dupes-run").addEventListener("click", async () => {
       html += `</div></div>`;
     }
     $("#dupes-result").innerHTML = html;
+    // Hover-Popup mit vollem Pfad + Groesse fuer Dupe-Karten
+    document.querySelectorAll(".dup-card").forEach(card => {
+      card.addEventListener("mouseenter", () => {
+        const path  = card.dataset.path || "";
+        const size  = parseInt(card.dataset.size || "0");
+        const fname = path.split("/").pop() || path;
+        const dir   = path.slice(0, path.length - fname.length).replace(/\/$/, "");
+        const pop = $("#card-pop");
+        pop.innerHTML = `
+          <div style="font-weight:600;word-break:break-all">${escapeHtml(fname)}</div>
+          <div class="full-path" style="word-break:break-all;margin-top:4px">${escapeHtml(dir || "/")}</div>
+          <div style="margin-top:6px;color:var(--accent-2);font-weight:600">
+            ${bytes(size)} <span style="color:var(--text-faint);font-weight:normal">(${size.toLocaleString("de-DE")} bytes)</span>
+          </div>`;
+        const r = card.getBoundingClientRect();
+        pop.style.width = "320px";
+        pop.style.left  = Math.min(r.left, window.innerWidth - 340) + "px";
+        pop.classList.add("active");
+        const ph = pop.offsetHeight;
+        if (r.bottom + ph + 8 < window.innerHeight) {
+          pop.style.top = (r.bottom + 4) + "px"; pop.style.bottom = "auto";
+        } else {
+          pop.style.bottom = (window.innerHeight - r.top + 4) + "px";
+          pop.style.top = "auto";
+        }
+      });
+      card.addEventListener("mouseleave", hideCardPop);
+    });
     document.querySelectorAll(".dupes-del").forEach(b => {
       b.addEventListener("click", async (e) => {
         e.stopPropagation();
