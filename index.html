@@ -4,31 +4,86 @@
 <meta charset="utf-8">
 <title>mediasearch</title>
 <style>
-  :root { color-scheme: dark; font-size: 16px; }
+  :root {
+    color-scheme: dark;
+    font-size: 16px;
+    --bg:        #0f1115;
+    --bg-2:      #161922;
+    --bg-3:      #1d212c;
+    --line:      #2a2f3a;
+    --line-soft: #232732;
+    --text:      #e8eaef;
+    --text-dim:  #9aa1ad;
+    --text-faint:#5b626f;
+    --accent:    #4ad27a;
+    --accent-2:  #6aaaff;
+    --accent-3:  #f088c2;
+    --warn:      #f0a043;
+    --err:       #e36161;
+    --radius:    8px;
+    --radius-sm: 6px;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee;
-         font-size: 1rem; line-height: 1.4; }
-  header { padding: 12px 16px; background: #1a1a1a; border-bottom: 1px solid #333;
-           position: sticky; top: 0; z-index: 10; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  header input[type=text] { flex: 1 1 360px; min-width: 240px; padding: 10px 12px;
-           background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; font-size: 1rem; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, "Inter", sans-serif;
+         background: var(--bg); color: var(--text); font-size: 1rem; line-height: 1.45; }
+  /* Buttons (global) */
+  button, .btn {
+    background: var(--bg-3); color: var(--text); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); cursor: pointer; font-size: 0.92rem;
+    padding: 8px 14px; font-family: inherit;
+    transition: background .12s ease, border-color .12s ease, transform .05s ease;
+  }
+  button:hover, .btn:hover { background: #232838; border-color: #3a4150; }
+  button:active { transform: translateY(1px); }
+  button:disabled, .btn:disabled { opacity: .45; cursor: default; transform: none; }
+  button.primary {
+    background: linear-gradient(180deg, #4ad27a 0%, #36b663 100%);
+    color: #082912; border-color: transparent; font-weight: 600;
+  }
+  button.primary:hover { filter: brightness(1.06); }
+  button.primary:disabled { background: var(--bg-3); color: var(--text-faint);
+       border-color: var(--line); filter: none; font-weight: normal; }
+  button.danger {
+    background: linear-gradient(180deg, #e36161 0%, #c54b4b 100%);
+    color: #2a0606; border-color: transparent; font-weight: 600;
+  }
+  /* Header */
+  header {
+    padding: 12px 18px; background: var(--bg-2);
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  header input[type=text] {
+    flex: 1 1 360px; min-width: 240px; padding: 9px 12px;
+    background: var(--bg-3); color: var(--text);
+    border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 1rem;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  header input[type=text]:focus {
+    outline: none; border-color: var(--accent-2);
+    box-shadow: 0 0 0 3px rgba(106,170,255,0.15);
+  }
   .q-wrap { flex: 1 1 360px; min-width: 240px; position: relative; display: flex; }
   .q-wrap input { flex: 1; padding-right: 32px !important; }
   .q-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-       width: 22px; height: 22px; border: none; background: transparent; color: #888;
+       width: 24px; height: 24px; border: none; background: transparent; color: var(--text-faint);
        cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0; display: none;
        border-radius: 50%; }
-  .q-clear:hover { color: #eee; background: #333; }
+  .q-clear:hover { color: var(--text); background: var(--bg-3); }
   .q-wrap.has-text .q-clear { display: block; }
-  header select, header button { padding: 10px 14px; background: #222; color: #eee;
-           border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 0.95rem; }
-  header button:hover { background: #2c2c2c; }
-  header button.primary { background: #2d5; color: #000; border-color: #2d5; }
-  header button.primary:disabled { background: #333; color: #777; border-color: #444; cursor: default; }
-  .stats { font-size: 0.9rem; color: #aaa; padding: 6px 16px; background: #181818;
+  header select { background: var(--bg-3); color: var(--text);
+       border: 1px solid var(--line); border-radius: var(--radius-sm);
+       padding: 8px 10px; font-size: 0.92rem; cursor: pointer; }
+
+  /* Stats-Bar */
+  .stats { font-size: 0.85rem; color: var(--text-dim); padding: 7px 18px;
+           background: var(--bg); border-bottom: 1px solid var(--line-soft);
            display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .stats button { background: #222; color: #ddd; border: 1px solid #444;
-           border-radius: 3px; font-size: 0.85rem; padding: 4px 10px; cursor: pointer; }
+  .stats button { background: transparent; color: var(--text-dim);
+           border: 1px solid var(--line);
+           border-radius: 14px; font-size: 0.78rem; padding: 3px 10px; }
+  .stats button:hover { color: var(--text); border-color: var(--accent-2); }
 
   /* Manuelle Tag-Leiste */
   #mtags { padding: 8px 14px; background: #181818; border-bottom: 1px solid #2a2a2a;
@@ -84,35 +139,71 @@
   #picker button.primary { background: #2d5; color: #000; border-color: #2d5; }
 
   /* Status panel */
-  details.status { background: #181818; border-bottom: 1px solid #2a2a2a; }
-  details.status > summary { padding: 8px 16px; cursor: pointer; font-size: 0.95rem;
-       color: #ccc; user-select: none; list-style: none; }
-  details.status > summary::-webkit-details-marker { display: none; }
-  details.status > summary::before { content: "\25B6 "; color: #555; font-size: 10px; }
-  details.status[open] > summary::before { content: "\25BC "; }
-  .status-body { padding: 10px 16px; font-size: 0.9rem; display: grid;
-       grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-  .status-body h4 { margin: 0 0 6px; font-size: 0.85rem; color: #aaa;
-       text-transform: uppercase; letter-spacing: .5px; }
-  .status-body ul { margin: 0; padding: 0; list-style: none; max-height: 220px; overflow: auto; }
-  .status-body li { padding: 3px 0; color: #ccc; white-space: nowrap;
-       overflow: hidden; text-overflow: ellipsis; font-family: monospace; font-size: 0.85rem; }
-  .status-body li.err { color: #f88; }
-  .status-body li .age { color: #555; margin-right: 6px; }
-  .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-       background: #2d5; margin-right: 6px; vertical-align: middle;
-       animation: pulse 1.2s ease-in-out infinite; }
-  .pulse.idle { background: #555; animation: none; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  /* Activity-Pille (floating) und Drawer */
+  #activity-pill {
+    position: fixed; right: 16px; bottom: 16px; z-index: 40;
+    background: var(--bg-2); border: 1px solid var(--line);
+    border-radius: 22px; padding: 8px 14px 8px 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; user-select: none;
+    box-shadow: 0 6px 18px rgba(0,0,0,.35);
+    transition: border-color .12s ease, transform .12s ease;
+    font-size: 0.85rem; color: var(--text-dim);
+  }
+  #activity-pill:hover { border-color: var(--accent-2); color: var(--text); }
+  #activity-pill.active { border-color: var(--accent); }
+  #activity-pill .pulse {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--accent); animation: pulse 1.2s ease-in-out infinite;
+  }
+  #activity-pill .pulse.idle { background: var(--text-faint); animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
-  /* Tagger log */
-  #log-panel { background: #0a0a0a; border-bottom: 1px solid #2a2a2a;
-       max-height: 320px; overflow: auto; padding: 10px 16px; font-family: monospace;
-       font-size: 0.9rem; color: #ddd; display: none; }
-  #log-panel.active { display: block; }
-  #log-panel .line { white-space: pre; }
-  #log-panel .err  { color: #f88; }
-  #log-panel .ok   { color: #8d8; }
+  #drawer {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 39;
+    background: var(--bg-2); border-top: 1px solid var(--line);
+    box-shadow: 0 -8px 24px rgba(0,0,0,.4);
+    transform: translateY(100%); transition: transform .25s ease;
+    display: flex; flex-direction: column; max-height: 60vh;
+  }
+  #drawer.open { transform: translateY(0); }
+  #drawer .head {
+    display: flex; gap: 4px; align-items: center;
+    padding: 6px 10px 0; border-bottom: 1px solid var(--line);
+  }
+  #drawer .tab {
+    background: transparent; color: var(--text-dim); border: none;
+    border-bottom: 2px solid transparent; border-radius: 0;
+    padding: 8px 14px; font-size: 0.9rem; cursor: pointer;
+  }
+  #drawer .tab:hover { color: var(--text); background: transparent; border-bottom-color: var(--line); }
+  #drawer .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  #drawer .head .spacer { flex: 1; }
+  #drawer .head button.close {
+    background: transparent; border: none; color: var(--text-dim);
+    font-size: 1.1rem; padding: 6px 10px; cursor: pointer; border-radius: 4px;
+  }
+  #drawer .head button.close:hover { color: var(--text); background: var(--bg-3); }
+
+  /* Drawer-Inhalt */
+  .drawer-pane { display: none; padding: 12px 16px; overflow: auto; flex: 1; }
+  .drawer-pane.active { display: block; }
+  #pane-status { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  #pane-status.active { display: grid; }
+  #pane-status h4 { margin: 0 0 6px; font-size: 0.78rem; color: var(--text-dim);
+       text-transform: uppercase; letter-spacing: .5px; }
+  #pane-status ul { margin: 0; padding: 0; list-style: none;
+       max-height: 220px; overflow: auto; }
+  #pane-status li { padding: 3px 0; color: var(--text); white-space: nowrap;
+       overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+       font-size: 0.82rem; }
+  #pane-status li.err { color: var(--err); }
+  #pane-status li .age { color: var(--text-faint); margin-right: 6px; }
+
+  #pane-log { font-family: ui-monospace, "SF Mono", Menlo, monospace;
+       font-size: 0.85rem; color: var(--text); background: #0a0c11; }
+  #pane-log .line { white-space: pre-wrap; word-break: break-all; }
+  #pane-log .ok   { color: var(--accent); }
+  #pane-log .err  { color: var(--err); }
 
   /* Result grid */
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -227,7 +318,6 @@
 
 <div class="stats">
   <span id="stats">-</span>
-  <span><button id="toggle-log">Log</button></span>
 </div>
 
 <div id="mtags">
@@ -282,16 +372,27 @@
   </div>
 </div>
 
-<div id="log-panel"></div>
+<!-- Activity Pille (immer sichtbar, klein) -->
+<div id="activity-pill" title="Status &amp; Log einblenden">
+  <span class="pulse idle" id="pulse"></span>
+  <span id="status-line">lade...</span>
+</div>
 
-<details class="status" id="status-panel">
-  <summary><span class="pulse idle" id="pulse"></span><span id="status-line">lade Status...</span></summary>
-  <div class="status-body">
-    <div><h4>Aktiv (processing)</h4><ul id="status-active"><li style="color:#555">-</li></ul></div>
-    <div><h4>Zuletzt fertig</h4><ul id="status-done"><li style="color:#555">-</li></ul></div>
-    <div><h4>Letzte Fehler</h4><ul id="status-err"><li style="color:#555">-</li></ul></div>
+<!-- Drawer mit Status + Log (eingeklappt by default) -->
+<div id="drawer">
+  <div class="head">
+    <button class="tab active" data-pane="pane-status">Status</button>
+    <button class="tab" data-pane="pane-log">Log</button>
+    <span class="spacer"></span>
+    <button class="close" id="drawer-close" title="Schliessen">&times;</button>
   </div>
-</details>
+  <div id="pane-status" class="drawer-pane active">
+    <div><h4>Aktiv (processing)</h4><ul id="status-active"><li style="color:var(--text-faint)">-</li></ul></div>
+    <div><h4>Zuletzt fertig</h4><ul id="status-done"><li style="color:var(--text-faint)">-</li></ul></div>
+    <div><h4>Letzte Fehler</h4><ul id="status-err"><li style="color:var(--text-faint)">-</li></ul></div>
+  </div>
+  <div id="pane-log" class="drawer-pane"></div>
+</div>
 
 <div class="grid" id="grid"></div>
 <div id="page-bar" style="padding:14px 16px;text-align:center;display:none;
@@ -731,7 +832,7 @@ $("#s-rescan").addEventListener("click", async () => {
   const r = await fetch("/api/rescan", {method:"POST"});
   if (r.ok) {
     showMsg("Re-Scan laeuft, siehe Log-Panel", "#8d8");
-    $("#log-panel").classList.add("active");
+    openDrawer("pane-log");
   } else {
     showMsg("Re-Scan Fehler: " + await r.text(), "#f88");
   }
@@ -790,7 +891,7 @@ $("#s-start").addEventListener("click", async () => {
     return;
   }
   showMsg("Tagger gestartet", "#8d8");
-  $("#log-panel").classList.add("active");
+  openDrawer("pane-log");
   setTimeout(()=>showMsg("", "#888"), 4000);
 });
 $("#s-stop").addEventListener("click", async () => {
@@ -858,7 +959,7 @@ let logSince = 0;
 async function loadLog() {
   try {
     const r = await fetch("/api/tagger/log?since=" + logSince).then(r=>r.json());
-    const panel = $("#log-panel");
+    const panel = $("#pane-log");
     const wasAtBottom = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 20;
     for (const ln of (r.lines || [])) {
       const div = document.createElement("div");
@@ -870,11 +971,34 @@ async function loadLog() {
     if (wasAtBottom) panel.scrollTop = panel.scrollHeight;
     $("#s-start").disabled = !!r.running;
     $("#s-stop").disabled  = !r.running;
-    if (r.running && !$("#log-panel").classList.contains("active"))
-      $("#log-panel").classList.add("active");
+    if (r.running && !$("#drawer").classList.contains("open"))
+      openDrawer("pane-log");
   } catch (e) {}
 }
-$("#toggle-log").addEventListener("click", () => $("#log-panel").classList.toggle("active"));
+// ---- Drawer ----
+function openDrawer(paneId) {
+  $("#drawer").classList.add("open");
+  $("#activity-pill").classList.add("active");
+  if (paneId) selectDrawerPane(paneId);
+}
+function closeDrawer() {
+  $("#drawer").classList.remove("open");
+  $("#activity-pill").classList.remove("active");
+}
+function selectDrawerPane(paneId) {
+  document.querySelectorAll("#drawer .tab").forEach(b =>
+    b.classList.toggle("active", b.dataset.pane === paneId));
+  document.querySelectorAll("#drawer .drawer-pane").forEach(p =>
+    p.classList.toggle("active", p.id === paneId));
+}
+$("#drawer-close").addEventListener("click", closeDrawer);
+document.querySelectorAll("#drawer .tab").forEach(b => {
+  b.addEventListener("click", () => selectDrawerPane(b.dataset.pane));
+});
+$("#activity-pill").addEventListener("click", () => {
+  if ($("#drawer").classList.contains("open")) closeDrawer();
+  else openDrawer();
+});
 
 // ---- Slideshow ----
 let slideTimer = null;
