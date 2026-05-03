@@ -844,22 +844,23 @@ async function applyManualTag(tag, action, chip) {
   }
 }
 
-$("#search-btn").addEventListener("click", search);
+$("#search-btn").addEventListener("click", () => { search(); $("#q").blur(); });
 function updateQClear() {
   $("#q-wrap").classList.toggle("has-text", !!$("#q").value);
 }
 $("#q").addEventListener("input", updateQClear);
 $("#q").addEventListener("keydown", e => {
-  if (e.key === "Enter") search();
-  else if (e.key === "Escape" && $("#q").value) {
-    $("#q").value = ""; updateQClear(); search();
+  if (e.key === "Enter") { search(); $("#q").blur(); }
+  else if (e.key === "Escape") {
+    if ($("#q").value) { $("#q").value = ""; updateQClear(); search(); }
+    $("#q").blur();
   }
 });
 $("#q-clear").addEventListener("click", () => {
-  $("#q").value = ""; updateQClear(); $("#q").focus(); search();
+  $("#q").value = ""; updateQClear(); search(); $("#q").blur();
 });
-$("#type").addEventListener("change", search);
-$("#order").addEventListener("change", search);
+$("#type").addEventListener("change", () => { search(); $("#type").blur(); });
+$("#order").addEventListener("change", () => { search(); $("#order").blur(); });
 $("#select-all").addEventListener("click", () => {
   for (const r of results) selected.set(r.id, r);
   render(); updatePageBar();
@@ -1606,7 +1607,11 @@ $("#lora-do").addEventListener("click", async () => {
   const s = await fetch("/api/settings").then(r=>r.json());
   if (!s.root) $("#setup").classList.add("active");  // open setup if no root yet
   _lastPageSize = computePageSize();
-  loadStats(); loadStatus(); loadLog(); loadManualTags(); search();
+  loadStats(); loadStatus(); loadLog(); loadManualTags();
+  // Initial search + blur, damit Pfeiltasten sofort die Seitenwahl steuern
+  // (Suchfeld hat autofocus, sonst wuerde -> die Cursor-Position bewegen).
+  await search();
+  $("#q").blur();
   setInterval(loadStatus, 2000);
   setInterval(loadLog, 1500);
   setInterval(loadStats, 5000);
