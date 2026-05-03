@@ -561,11 +561,45 @@ async function loadStats() {
 let totalHits = 0;
 let currentOffset = 0;
 
+// Page-Cache: hält die letzten N Seiten im RAM, damit Back/Forth (gerade
+// bei Random-Sortierung) konsistent funktioniert.
+const PAGE_CACHE_SIZE = 10;
+const _pageCache = new Map();   // offset -> {results, total}
+let _cacheSig = "";
+function _querySig() {
+  return [$("#q").value, $("#type").value, $("#order").value,
+          $("#limit-q").value].join("|");
+}
+function _cachePut(offset, results, total) {
+  _pageCache.set(offset, {results: results.slice(), total});
+  if (_pageCache.size > PAGE_CACHE_SIZE) {
+    // aelteste Insertion wegwerfen (Map iteriert in Insertion-Order)
+    const oldestKey = _pageCache.keys().next().value;
+    _pageCache.delete(oldestKey);
+  }
+}
+
 async function search(opts={}) {
   const pageSize = parseInt($("#limit-q").value) || 200;
-  // bei neuer Suche -> Seite 0; sonst gegebenes offset
   if (opts.reset !== false) currentOffset = 0;
   if (opts.offset != null) currentOffset = opts.offset;
+
+  // Cache-Signatur prüfen - bei Aenderungen alles wegwerfen
+  const sig = _querySig();
+  if (sig !== _cacheSig) {
+    _pageCache.clear();
+    _cacheSig = sig;
+  }
+  // Treffer aus dem Cache wenn moeglich
+  const cached = _pageCache.get(currentOffset);
+  if (cached) {
+    results   = cached.results.slice();
+    totalHits = cached.total;
+    render();
+    updatePageBar();
+    if (opts.scrollTop !== false) window.scrollTo({top: 0, behavior: "instant"});
+    return;
+  }
 
   const params = new URLSearchParams({
     q: $("#q").value, type: $("#type").value,
@@ -574,9 +608,9 @@ async function search(opts={}) {
   const r = await fetch("/api/search?" + params).then(r=>r.json());
   results = r.results || [];
   totalHits = r.total ?? results.length;
+  _cachePut(currentOffset, results, totalHits);
   render();
   updatePageBar();
-  // hoch zum Anfang scrollen bei Seitenwechsel
   if (opts.scrollTop !== false) window.scrollTo({top: 0, behavior: "instant"});
 }
 
