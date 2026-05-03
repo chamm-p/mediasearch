@@ -285,6 +285,26 @@
   #card-pop .full-mtags { margin-top: 4px; color: var(--accent-3); font-size: 0.82rem; }
   #card-pop .full-path  { margin-top: 8px; color: var(--text-faint); font-size: 0.75rem;
        font-family: ui-monospace, "SF Mono", Menlo, monospace; word-break: break-all; }
+
+  /* Markiert-zum-Loeschen Karten in der Doubletten-Ansicht */
+  .dup-card.marked-del {
+    border-color: var(--err) !important;
+    background: rgba(227,97,97,0.12) !important;
+    position: relative;
+  }
+  .dup-card.marked-del img {
+    opacity: 0.4;
+    filter: grayscale(0.6);
+  }
+  .dup-card.marked-del::after {
+    content: "✗"; position: absolute; top: 8px; right: 8px;
+    width: 32px; height: 32px; line-height: 32px; text-align: center;
+    background: var(--err); color: #2a0606; border-radius: 50%;
+    font-weight: bold; font-size: 1.2rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,.4);
+    pointer-events: none;
+  }
+  #dup-exec-bar.active { display: flex !important; }
   .empty { padding: 40px; color: #aaa; text-align: center; font-size: 1rem; }
 
   /* slideshow */
@@ -521,6 +541,15 @@
     <!-- Scrollable Resultsarea -->
     <div id="dupes-result" style="font-size:0.9rem;padding:14px 22px;
          overflow-y:auto;overflow-x:hidden;flex:1 1 auto;min-height:0"></div>
+    <!-- Sticky Footer fuer Markierungs-Aktionen -->
+    <div id="dup-exec-bar" style="display:none;padding:10px 22px;
+         border-top:1px solid var(--line);background:var(--bg-2);
+         flex-shrink:0;align-items:center;gap:10px;font-size:0.9rem">
+      <span id="dup-exec-info" style="color:var(--text)"></span>
+      <span style="flex:1"></span>
+      <button id="dup-exec-clear">Markierungen leeren</button>
+      <button id="dup-exec-go" class="danger">Markierte endgueltig loeschen</button>
+    </div>
   </div>
 </div>
 
@@ -1080,18 +1109,78 @@ $("#s-rescan").addEventListener("click", async () => {
   }
 });
 // ---- Doubletten ----
+const _markedForDelete = new Set();
 function bytes(n) {
   if (n < 1024) return n + " B";
   if (n < 1024*1024) return (n/1024).toFixed(0) + " KB";
   return (n/1024/1024).toFixed(1) + " MB";
 }
+function updateExecBar() {
+  const n = _markedForDelete.size;
+  const bar = $("#dup-exec-bar");
+  if (n > 0) {
+    bar.classList.add("active");
+    $("#dup-exec-info").textContent = `${n} Files markiert`;
+  } else {
+    bar.classList.remove("active");
+  }
+}
 $("#s-dupes").addEventListener("click", () => {
   $("#dupes-result").innerHTML = "";
   $("#dupes-info").textContent = "";
+  _markedForDelete.clear();
+  updateExecBar();
   $("#dupes-modal").style.display = "flex";
 });
 $("#dupes-close").addEventListener("click", () => {
   $("#dupes-modal").style.display = "none";
+});
+$("#dup-exec-clear").addEventListener("click", () => {
+  _markedForDelete.clear();
+  document.querySelectorAll(".dup-card.marked-del").forEach(c => {
+    c.classList.remove("marked-del");
+    const b = c.querySelector(".dupes-mark");
+    if (b) {
+      b.textContent = "Zum Loeschen markieren";
+      b.style.background = "var(--bg-3)";
+      b.style.color = "var(--text)";
+    }
+  });
+  updateExecBar();
+});
+$("#dup-exec-go").addEventListener("click", async () => {
+  const ids = [..._markedForDelete];
+  if (!ids.length) return;
+  if (!confirm(`Wirklich ${ids.length} Files endgueltig loeschen?\n\nKein Undo - die Dateien werden geloescht!`)) return;
+  $("#dup-exec-go").disabled = true;
+  $("#dup-exec-info").textContent = `loesche ${ids.length} Files...`;
+  try {
+    const rsp = await fetch("/api/duplicates/delete", {method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ids})});
+    const j = await rsp.json();
+    if (j.ok) {
+      // betroffene Karten aus DOM entfernen
+      for (const id of ids) {
+        const card = document.querySelector(`.dup-card[data-id="${id}"]`);
+        if (card) card.remove();
+      }
+      _markedForDelete.clear();
+      $("#dup-exec-info").textContent =
+        `geloescht: ${j.deleted}` + (j.errors ? `, Fehler: ${j.errors}` : "");
+      // leere Gruppen wegraeumen
+      document.querySelectorAll("#dupes-result > div").forEach(g => {
+        if (!g.querySelector(".dup-card")) g.remove();
+      });
+    } else {
+      alert("Fehler: " + JSON.stringify(j));
+    }
+  } catch (e) {
+    alert("Fehler: " + e);
+  } finally {
+    $("#dup-exec-go").disabled = false;
+    updateExecBar();
+  }
 });
 $("#dupes-run").addEventListener("click", async () => {
   const mode = document.querySelector('input[name=dupes-mode]:checked').value;
@@ -1136,11 +1225,11 @@ $("#dupes-run").addEventListener("click", async () => {
                title="${escapeHtml(m.path)}">${escapeHtml(m.path)}</div>
           <div style="color:var(--accent-2);font-size:0.78rem;
                margin-top:4px;font-weight:600">${bytes(m.size||0)}</div>
-          <button class="dupes-del" data-id="${m.id}" data-path="${escapeHtml(m.path)}"
-                  style="margin-top:6px;width:100%;background:var(--err);
-                         color:#2a0606;border:none;padding:4px;border-radius:3px;
-                         cursor:pointer;font-weight:bold;font-size:0.78rem">
-            Loeschen
+          <button class="dupes-mark" data-id="${m.id}" data-path="${escapeHtml(m.path)}"
+                  style="margin-top:6px;width:100%;background:var(--bg-3);
+                         color:var(--text);border:1px solid var(--line);padding:4px;border-radius:3px;
+                         cursor:pointer;font-size:0.78rem">
+            Zum Loeschen markieren
           </button>
         </div>`;
       }
@@ -1175,23 +1264,26 @@ $("#dupes-run").addEventListener("click", async () => {
       });
       card.addEventListener("mouseleave", hideCardPop);
     });
-    document.querySelectorAll(".dupes-del").forEach(b => {
-      b.addEventListener("click", async (e) => {
+    // Markierungs-Toggle pro Karte (kein Sofort-Loeschen mehr)
+    document.querySelectorAll(".dupes-mark").forEach(b => {
+      b.addEventListener("click", (e) => {
         e.stopPropagation();
         const id = parseInt(b.dataset.id);
-        const path = b.dataset.path;
-        if (!confirm(`Wirklich loeschen?\n\n${path}\n\nKein Undo!`)) return;
-        const rsp = await fetch("/api/duplicates/delete", {method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ids:[id]})});
-        const j = await rsp.json();
-        if (j.ok && j.deleted) {
-          // Eintrag aus DOM entfernen
-          const card = b.closest('[data-id="'+id+'"]');
-          if (card) card.remove();
+        const card = b.closest('.dup-card');
+        if (_markedForDelete.has(id)) {
+          _markedForDelete.delete(id);
+          card.classList.remove('marked-del');
+          b.textContent = 'Zum Loeschen markieren';
+          b.style.background = 'var(--bg-3)';
+          b.style.color = 'var(--text)';
         } else {
-          alert("Fehler: " + JSON.stringify(j));
+          _markedForDelete.add(id);
+          card.classList.add('marked-del');
+          b.textContent = '✗ markiert (klick = entfernen)';
+          b.style.background = 'var(--err)';
+          b.style.color = '#2a0606';
         }
+        updateExecBar();
       });
     });
   } catch (e) {
