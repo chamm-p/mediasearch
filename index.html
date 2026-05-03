@@ -47,13 +47,19 @@
     background: linear-gradient(180deg, #e36161 0%, #c54b4b 100%);
     color: #2a0606; border-color: transparent; font-weight: 600;
   }
-  /* Header */
+  /* Toolbar unten */
+  body { padding-bottom: 64px; }   /* Platz fuer Bottom-Toolbar */
   header {
-    padding: 12px 18px; background: var(--bg-2);
-    border-bottom: 1px solid var(--line);
-    position: sticky; top: 0; z-index: 10;
-    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    padding: 10px 14px; background: var(--bg-2);
+    border-top: 1px solid var(--line);
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+    display: flex; gap: 10px; flex-wrap: nowrap; align-items: center;
+    height: 64px;
   }
+  header .left { display: flex; gap: 8px; align-items: center;
+       color: var(--text-dim); font-size: 0.85rem; min-width: 180px; }
+  header .center { flex: 1; display: flex; gap: 8px; justify-content: center; }
+  header .right { display: flex; gap: 6px; align-items: center; }
   header input[type=text] {
     flex: 1 1 360px; min-width: 240px; padding: 9px 12px;
     background: var(--bg-3); color: var(--text);
@@ -141,7 +147,7 @@
   /* Status panel */
   /* Activity-Pille (floating) und Drawer */
   #activity-pill {
-    position: fixed; right: 16px; bottom: 16px; z-index: 40;
+    position: fixed; right: 16px; top: 12px; z-index: 40;
     background: var(--bg-2); border: 1px solid var(--line);
     border-radius: 22px; padding: 8px 14px 8px 12px; cursor: pointer;
     display: flex; align-items: center; gap: 8px; user-select: none;
@@ -159,7 +165,7 @@
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
   #drawer {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 39;
+    position: fixed; left: 0; right: 0; bottom: 64px; z-index: 39;
     background: var(--bg-2); border-top: 1px solid var(--line);
     box-shadow: 0 -8px 24px rgba(0,0,0,.4);
     transform: translateY(100%); transition: transform .25s ease;
@@ -206,12 +212,26 @@
   #pane-log .err  { color: var(--err); }
 
   /* Result grid */
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-          gap: 10px; padding: 12px; }
+  /* Grid fuellt Viewport oberhalb der Bottom-Toolbar - kein vertikales Scrollen.
+     Page-Size wird im JS aus der berechneten Spalten/Zeilen-Anzahl gesetzt. */
+  .grid { display: grid;
+          grid-template-columns: repeat(var(--cols, 6), 1fr);
+          grid-template-rows:    repeat(var(--rows, 4), 1fr);
+          gap: 10px; padding: 12px;
+          height: calc(100vh - 64px);
+          overflow: hidden; }
+  .card { min-height: 0; min-width: 0; }
+  .card .thumb { aspect-ratio: auto; flex: 1 1 auto;
+       width: 100%; height: 100%; }
   .card { background: #1a1a1a; border: 2px solid transparent; border-radius: 6px;
-          cursor: pointer; position: relative; transition: border-color .1s; }
+          cursor: pointer; position: relative; transition: border-color .1s;
+          display: flex; flex-direction: column; min-height: 0; min-width: 0;
+          overflow: hidden; }
   .card:hover { z-index: 4; }
-  .card .thumb { border-radius: 4px 4px 0 0; }
+  .card .thumb { flex: 1 1 0; min-height: 0; min-width: 0;
+       background: #000; display: flex; align-items: center; justify-content: center;
+       border-radius: 4px 4px 0 0; }
+  .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .card.highlight { border-color: #fa0;
        animation: highlight-pulse 1.4s ease-out 3; }
   @keyframes highlight-pulse {
@@ -219,16 +239,17 @@
        100% { box-shadow: 0 0 0 16px rgba(255,170,0,0); }
   }
   .card.selected { border-color: #2d5; }
-  .card .thumb { width: 100%; aspect-ratio: 1; background: #000;
-                 display: flex; align-items: center; justify-content: center; }
-  .card .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  /* alte aspect-ratio-Regel ueberschrieben oben */
   .card .badge { position: absolute; top: 6px; left: 6px; padding: 2px 8px;
                  background: rgba(0,0,0,.75); border-radius: 3px; font-size: 0.8rem; }
   .card .badge.video { background: rgba(220,40,40,.9); }
-  .card .meta { padding: 8px 10px; font-size: 0.9rem; }
-  .card .meta .desc { color: #ddd; max-height: 4.5em; overflow: hidden; }
-  .card .meta .path { color: #777; font-size: 0.8rem; margin-top: 6px;
-                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .meta { padding: 4px 8px; font-size: 0.78rem; flex: 0 0 auto;
+       background: var(--bg-2); border-top: 1px solid var(--line-soft); }
+  .card .meta .desc { color: var(--text-dim);
+       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+       font-size: 0.78rem; line-height: 1.3; }
+  .card .meta .path { color: var(--text-faint); font-size: 0.72rem;
+       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* Hover-Popup mit voller Beschreibung + Tags - oeffnet direkt unter
      dem Bild und ueberdeckt die abgeschnittene Meta-Zeile */
   .card .thumb { position: relative; }
@@ -287,38 +308,48 @@
 </style>
 </head>
 <body>
-<header>
-  <span class="q-wrap" id="q-wrap">
-    <input id="q" type="text" placeholder='Suche (z.B. "sunset beach", katze, NOT outdoor)' autofocus>
-    <button class="q-clear" id="q-clear" type="button" title="Suche leeren (Esc)">&times;</button>
-  </span>
-  <select id="type">
-    <option value="">Alle</option>
-    <option value="image">Bilder</option>
-    <option value="video">Videos</option>
-  </select>
-  <select id="order" title="Sortierung der Trefferliste">
-    <option value="relevance">Relevanz</option>
-    <option value="newest">Neueste zuerst</option>
-    <option value="oldest">Aelteste zuerst</option>
-    <option value="path" selected>Pfad / Name</option>
-    <option value="random">Random</option>
-  </select>
-  <select id="limit-q">
-    <option>50</option><option selected>200</option><option>500</option><option>1000</option>
-  </select>
-  <button id="search-btn">Suchen</button>
-  <button id="select-all">Alle</button>
-  <button id="clear-sel">Auswahl loeschen</button>
-  <button id="slideshow-btn" class="primary" disabled>Slideshow</button>
-  <button id="play-btn" class="primary" disabled>Random Play</button>
-  <button id="lora-btn" disabled>LoRA Export</button>
-  <button id="toggle-setup">Setup &amp; Tagging</button>
-</header>
+<!-- versteckter limit-Select - JS setzt den Wert dynamisch je nach Viewport -->
+<select id="limit-q" style="display:none">
+  <option value="50">50</option><option value="200" selected>200</option>
+  <option value="500">500</option><option value="1000">1000</option>
+</select>
+<!-- versteckter Stats-Container fuer altes JS -->
+<span id="stats" style="display:none"></span>
 
-<div class="stats">
-  <span id="stats">-</span>
-</div>
+<header>
+  <div class="left">
+    <button id="page-prev" title="vorherige Seite (Pfeil-links)">&laquo;</button>
+    <span id="page-info">-</span>
+    <button id="page-next" title="naechste Seite (Pfeil-rechts)">&raquo;</button>
+  </div>
+  <div class="center">
+    <span class="q-wrap" id="q-wrap">
+      <input id="q" type="text" placeholder='Suche (z.B. "sunset beach", katze, NOT outdoor)' autofocus>
+      <button class="q-clear" id="q-clear" type="button" title="Suche leeren (Esc)">&times;</button>
+    </span>
+    <select id="type">
+      <option value="">Alle</option>
+      <option value="image">Bilder</option>
+      <option value="video">Videos</option>
+    </select>
+    <select id="order" title="Sortierung der Trefferliste">
+      <option value="relevance">Relevanz</option>
+      <option value="newest">Neueste zuerst</option>
+      <option value="oldest">Aelteste zuerst</option>
+      <option value="path" selected>Pfad / Name</option>
+      <option value="random">Random</option>
+    </select>
+    <button id="search-btn">Suchen</button>
+  </div>
+  <div class="right">
+    <button id="select-all" title="Alle auf dieser Seite auswaehlen">Alle</button>
+    <button id="clear-sel" title="Auswahl leeren">Leer</button>
+    <button id="slideshow-btn" class="primary" disabled>Slideshow</button>
+    <button id="play-btn" class="primary" disabled>Random Play</button>
+    <button id="lora-btn" disabled>LoRA</button>
+    <button id="toggle-setup">Setup</button>
+  </div>
+</header>
 
 <div id="mtags">
   <span id="mtags-groups"></span>
@@ -395,17 +426,11 @@
 </div>
 
 <div class="grid" id="grid"></div>
-<div id="page-bar" style="padding:14px 16px;text-align:center;display:none;
-     display:flex;justify-content:center;align-items:center;gap:10px;
-     background:#181818;border-top:1px solid #2a2a2a">
-  <button id="page-prev" style="padding:8px 14px;background:#222;color:#eee;
-       border:1px solid #444;border-radius:4px;cursor:pointer;font-size:0.95rem">&laquo; Zurueck</button>
-  <span id="page-info" style="color:#ccc;font-size:0.95rem;min-width:200px"></span>
-  <button id="page-next" style="padding:8px 14px;background:#222;color:#eee;
-       border:1px solid #444;border-radius:4px;cursor:pointer;font-size:0.95rem">Weiter &raquo;</button>
-  <span id="sel-info" style="color:#8d8;font-size:0.9rem;margin-left:20px"></span>
-</div>
-<div class="empty" id="empty" style="display:none">Keine Treffer.</div>
+<!-- versteckter Container fuer alten Code, sel-info wird via Pille/Header angezeigt -->
+<span id="sel-info" style="display:none"></span>
+<div class="empty" id="empty" style="display:none;position:fixed;
+     left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
+     color:var(--text-dim)">Keine Treffer.</div>
 
 <!-- Directory picker -->
 <div id="picker">
@@ -536,24 +561,19 @@ async function search(opts={}) {
 }
 
 function updatePageBar() {
-  const bar = $("#page-bar");
   const pageSize = parseInt($("#limit-q").value) || 200;
-  if (!totalHits) { bar.style.display = "none"; return; }
-  bar.style.display = "flex";
+  if (!totalHits) {
+    $("#page-info").textContent = "0";
+    $("#page-prev").disabled = true;
+    $("#page-next").disabled = true;
+    return;
+  }
   const from = currentOffset + 1;
   const to   = Math.min(currentOffset + results.length, totalHits);
-  const pageNum = Math.floor(currentOffset / pageSize) + 1;
-  const pages   = Math.max(1, Math.ceil(totalHits / pageSize));
-  $("#page-info").textContent =
-    `${from}-${to} von ${totalHits}  (Seite ${pageNum}/${pages})`;
+  const sel  = selected.size ? `  -  ${selected.size} ausgewaehlt` : "";
+  $("#page-info").textContent = `${from}-${to} von ${totalHits}${sel}`;
   $("#page-prev").disabled = currentOffset <= 0;
   $("#page-next").disabled = currentOffset + results.length >= totalHits;
-  // Auswahl-Info: ueber Seiten persistent
-  if (selected.size) {
-    $("#sel-info").textContent = `${selected.size} ausgewaehlt`;
-  } else {
-    $("#sel-info").textContent = "";
-  }
 }
 $("#page-prev").addEventListener("click", () => {
   const pageSize = parseInt($("#limit-q").value) || 200;
@@ -562,6 +582,51 @@ $("#page-prev").addEventListener("click", () => {
 $("#page-next").addEventListener("click", () => {
   const pageSize = parseInt($("#limit-q").value) || 200;
   search({offset: currentOffset + pageSize, reset: false});
+});
+
+// Viewport-fit: berechne wie viele cols x rows passen, setze Grid-Vars
+// und aktualisiere die Page-Size.
+const MIN_CARD_W = 200;
+const MIN_CARD_H = 180;
+let _lastPageSize = 0;
+function computePageSize() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight - 64;   // Toolbar
+  const padding = 24;                    // 12px Grid-padding *2
+  const gap     = 10;
+  const usableW = Math.max(MIN_CARD_W, vw - padding);
+  const usableH = Math.max(MIN_CARD_H, vh - padding);
+  const cols = Math.max(1, Math.floor((usableW + gap) / (MIN_CARD_W + gap)));
+  const rows = Math.max(1, Math.floor((usableH + gap) / (MIN_CARD_H + gap)));
+  document.documentElement.style.setProperty("--cols", cols);
+  document.documentElement.style.setProperty("--rows", rows);
+  const pageSize = cols * rows;
+  $("#limit-q").value = String(pageSize);
+  return pageSize;
+}
+let _resizeTimer = null;
+// Pfeiltasten = Seitenwechsel (wenn nicht in Eingabefeld und nicht in Slideshow)
+document.addEventListener("keydown", (e) => {
+  if ($("#slideshow").classList.contains("active")) return;
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return;
+  if (e.key === "ArrowRight" || e.key === "PageDown") {
+    e.preventDefault(); $("#page-next").click();
+  } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+    e.preventDefault(); $("#page-prev").click();
+  }
+});
+
+window.addEventListener("resize", () => {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    const newSize = computePageSize();
+    if (newSize !== _lastPageSize) {
+      _lastPageSize = newSize;
+      // Seite neu laden mit angepasster Groesse
+      search({offset: 0, scrollTop: false});
+    }
+  }, 200);
 });
 
 function render() {
@@ -1450,6 +1515,7 @@ $("#lora-do").addEventListener("click", async () => {
   await loadSettings();
   const s = await fetch("/api/settings").then(r=>r.json());
   if (!s.root) $("#setup").classList.add("active");  // open setup if no root yet
+  _lastPageSize = computePageSize();
   loadStats(); loadStatus(); loadLog(); loadManualTags(); search();
   setInterval(loadStatus, 2000);
   setInterval(loadLog, 1500);
