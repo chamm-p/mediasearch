@@ -297,7 +297,7 @@ CREATE TABLE IF NOT EXISTS files (
 );
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
 CREATE INDEX IF NOT EXISTS idx_files_type ON files(type);
-CREATE INDEX IF NOT EXISTS idx_files_chash ON files(content_hash);
+-- idx_files_chash wird in init_db NACH der content_hash-Migration angelegt
 
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
     description, tags, manual_tags, rel_path,
