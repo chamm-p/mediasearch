@@ -977,10 +977,13 @@ def api_duplicates(mode: str = "exact", threshold: int = 6,
                 })
             return {"mode": "exact", "groups": groups}
 
-        # mode='near': perceptual hash hamming distance
+        # mode='near': perceptual hash hamming distance.
+        # Bilder werden direkt gehasht, Videos ueber den mittleren Frame.
+        # Wir gruppieren ueber alle Files mit phash gemeinsam, da ein Video
+        # und ein extrahiertes Standbild oft denselben pHash haben (legitim).
         rows = conn.execute(
             "SELECT id, rel_path, type, size, phash_int FROM files "
-            "WHERE type='image' AND phash_int IS NOT NULL"
+            "WHERE phash_int IS NOT NULL"
         ).fetchall()
         if not rows:
             return {"mode": "near", "groups": [],

@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import time
 from pathlib import Path
 
 from PIL import Image
 
-from common import connect, decode_surrogates, init_db
+from common import (connect, decode_surrogates, extract_video_frame,
+                    init_db, video_duration)
 
 
 def content_hash(path: Path) -> str:
@@ -31,20 +33,49 @@ def content_hash(path: Path) -> str:
         return ""
 
 
-def perceptual_hash(path: Path) -> int | None:
-    """64-bit pHash (DCT-basiert) als signed int."""
+def _phash_pil(im: Image.Image) -> int | None:
     try:
         import imagehash
-        with Image.open(path) as im:
-            im = im.convert("RGB")
-            h = imagehash.phash(im, hash_size=8)
-        # 64-bit hash als int (vorzeichenbehaftet fuer SQLite)
+        h = imagehash.phash(im, hash_size=8)
         v = int(str(h), 16)
         if v >= (1 << 63):
             v -= (1 << 64)
         return v
     except Exception:
         return None
+
+
+def perceptual_hash_image(path: Path) -> int | None:
+    try:
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            return _phash_pil(im)
+    except Exception:
+        return None
+
+
+def perceptual_hash_video(path: Path) -> int | None:
+    """pHash auf mittlerem Frame des Videos. Findet re-encoded /
+    re-komprimierte Versionen desselben Videos."""
+    dur = video_duration(path)
+    ts = dur / 2 if dur > 0 else 1.0
+    data = extract_video_frame(path, ts)
+    if not data:
+        return None
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im = im.convert("RGB")
+            return _phash_pil(im)
+    except Exception:
+        return None
+
+
+def perceptual_hash(path: Path, kind: str) -> int | None:
+    if kind == "image":
+        return perceptual_hash_image(path)
+    if kind == "video":
+        return perceptual_hash_video(path)
+    return None
 
 
 def cmd_dedupe(args: argparse.Namespace) -> None:
@@ -62,7 +93,7 @@ def cmd_dedupe(args: argparse.Namespace) -> None:
             wheres.append("type = ?"); params.append(args.only)
         if not args.all:
             wheres.append("(content_hash IS NULL OR content_hash = '' "
-                          "OR (type='image' AND phash_int IS NULL))")
+                          "OR phash_int IS NULL)")
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
         sql += " ORDER BY id"
@@ -100,7 +131,7 @@ def cmd_dedupe(args: argparse.Namespace) -> None:
             skipped += 1
             continue
         chash = content_hash(src)
-        phash = perceptual_hash(src) if kind == "image" else None
+        phash = perceptual_hash(src, kind)
         if chash:
             pending.append((chash, phash, fid))
             done += 1
