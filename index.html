@@ -821,7 +821,9 @@ function render() {
   empty.style.display = results.length ? "none" : "";
   for (const it of results) {
     const card = document.createElement("div");
-    card.className = "card" + (selected.has(it.id) ? " selected" : "");
+    card.className = "card"
+       + (selected.has(it.id) ? " selected" : "")
+       + (_highlightedId === it.id ? " highlight" : "");
     card.dataset.id = it.id;
     const mtags = it.manual_tags || [];
     const tagsLine  = it.tags.slice(0, 8).join(", ");
@@ -1737,12 +1739,12 @@ function scheduleNext() {
 }
 function nextSlide() { slideIdx = (slideIdx+1) % slideOrder.length; showSlide(); scheduleNext(); }
 function prevSlide() { slideIdx = (slideIdx-1+slideOrder.length) % slideOrder.length; showSlide(); scheduleNext(); }
+let _highlightedId = null;     // Welche Karte ist aktuell hervorgehoben?
 let _highlightSafetyTimer = null;
-let _highlightArmedAt = 0;     // Zeitpunkt-Wachhund: ignoriere Events der ersten ~400ms
+let _highlightArmedAt = 0;
 function _dismissHighlight(e) {
-  // Grace period: erst 400ms nach dem Setzen reagieren - sonst frisst
-  // ein nachzuegelndes Esc/Mouse-Event den Marker sofort weg.
   if (e && (Date.now() - _highlightArmedAt) < 400) return;
+  _highlightedId = null;
   document.querySelectorAll(".card.highlight").forEach(c =>
     c.classList.remove("highlight"));
   document.removeEventListener("mousedown", _dismissHighlight, true);
@@ -1756,7 +1758,6 @@ function _armHighlightDismiss() {
   document.removeEventListener("keydown",   _dismissHighlight, true);
   document.addEventListener("mousedown", _dismissHighlight, true);
   document.addEventListener("keydown",   _dismissHighlight, true);
-  // KEIN wheel-Listener mehr - zu leicht versehentlich getriggert
   clearTimeout(_highlightSafetyTimer);
   _highlightSafetyTimer = setTimeout(() => _dismissHighlight(null), 120000);
 }
@@ -1766,10 +1767,9 @@ function scrollToCard(id) {
   if (!card) return false;
   document.querySelectorAll(".card.highlight").forEach(c =>
     c.classList.remove("highlight"));
-  // scrollIntoView funktioniert bei overflow:hidden Grids ohnehin nicht;
-  // wir verlassen uns auf das Page-Switching der search()-Aufrufer.
   try { card.scrollIntoView({behavior: "smooth", block: "center"}); } catch {}
   card.classList.add("highlight");
+  _highlightedId = id;
   _armHighlightDismiss();
   return true;
 }
