@@ -251,10 +251,10 @@
        border-radius: 4px 4px 0 0; }
   .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .card.highlight { border-color: #fa0;
-       animation: highlight-pulse 1.4s ease-out 3; }
+       animation: highlight-pulse 2s ease-in-out infinite; }
   @keyframes highlight-pulse {
-       0%   { box-shadow: 0 0 0 0 rgba(255,170,0,0.85); }
-       100% { box-shadow: 0 0 0 16px rgba(255,170,0,0); }
+       0%, 100% { box-shadow: 0 0 0 0 rgba(255,170,0,0.7); }
+       50%      { box-shadow: 0 0 0 14px rgba(255,170,0,0); }
   }
   .card.selected { border-color: #2d5; }
   /* alte aspect-ratio-Regel ueberschrieben oben */
@@ -1645,12 +1645,38 @@ function scheduleNext() {
 }
 function nextSlide() { slideIdx = (slideIdx+1) % slideOrder.length; showSlide(); scheduleNext(); }
 function prevSlide() { slideIdx = (slideIdx-1+slideOrder.length) % slideOrder.length; showSlide(); scheduleNext(); }
+let _highlightSafetyTimer = null;
+function _dismissHighlight() {
+  document.querySelectorAll(".card.highlight").forEach(c =>
+    c.classList.remove("highlight"));
+  document.removeEventListener("mousedown", _dismissHighlight, true);
+  document.removeEventListener("keydown",   _dismissHighlight, true);
+  document.removeEventListener("wheel",     _dismissHighlight, true);
+  clearTimeout(_highlightSafetyTimer);
+  _highlightSafetyTimer = null;
+}
+function _armHighlightDismiss() {
+  // Listener nur einmal aktiv halten
+  document.removeEventListener("mousedown", _dismissHighlight, true);
+  document.removeEventListener("keydown",   _dismissHighlight, true);
+  document.removeEventListener("wheel",     _dismissHighlight, true);
+  document.addEventListener("mousedown", _dismissHighlight, true);
+  document.addEventListener("keydown",   _dismissHighlight, true);
+  document.addEventListener("wheel",     _dismissHighlight, true);
+  // Sicherheits-Timeout, falls User minutenlang nichts macht
+  clearTimeout(_highlightSafetyTimer);
+  _highlightSafetyTimer = setTimeout(_dismissHighlight, 120000);
+}
+
 function scrollToCard(id) {
   const card = document.querySelector(`.card[data-id="${id}"]`);
   if (!card) return false;
+  // bestehende Highlights wegnehmen, neuen Marker setzen
+  document.querySelectorAll(".card.highlight").forEach(c =>
+    c.classList.remove("highlight"));
   card.scrollIntoView({behavior: "smooth", block: "center"});
   card.classList.add("highlight");
-  setTimeout(() => card.classList.remove("highlight"), 5000);
+  _armHighlightDismiss();
   return true;
 }
 
@@ -1699,11 +1725,15 @@ async function closeSlideshow() {
   const targetOffset = Math.floor(offset / pageSize) * pageSize;
   console.log("[closeSlideshow] springe zu offset", targetOffset);
   await search({offset: targetOffset, reset: false, scrollTop: false});
-  // DOM-Render abwarten
-  setTimeout(() => {
-    const ok = scrollToCard(lastId);
-    console.log("[closeSlideshow] scrollToCard ->", ok);
-  }, 150);
+  // direkt versuchen; falls DOM noch nicht ready, naechsten Frame retry
+  if (!scrollToCard(lastId)) {
+    requestAnimationFrame(() => {
+      if (!scrollToCard(lastId)) {
+        // letzte Chance: kurz warten bis Bilder geladen sind
+        setTimeout(() => scrollToCard(lastId), 200);
+      }
+    });
+  }
 }
 
 $("#slideshow-btn").addEventListener("click", startSlideshow);
