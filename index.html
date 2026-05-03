@@ -416,6 +416,8 @@
       Tags normalisieren</button>
     <button id="s-optimize" title="VACUUM + ANALYZE + WAL-Checkpoint - macht Suche schneller">
       DB optimieren</button>
+    <button id="s-dupes" title="Doubletten suchen (exakte Dateien + visuell aehnliche Bilder)">
+      Doubletten</button>
     <span id="s-msg" style="font-size:12px;align-self:center"></span>
   </div>
 </div>
@@ -461,6 +463,36 @@
       <button id="picker-cancel">Abbrechen</button>
       <button id="picker-pick" class="primary">Diesen Ordner waehlen</button>
     </div>
+  </div>
+</div>
+
+<!-- Doubletten Modal -->
+<div id="dupes-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.85);
+     z-index:60;display:none;align-items:flex-start;justify-content:center;
+     overflow:auto;padding:30px 20px">
+  <div style="background:var(--bg-2);border:1px solid var(--line);border-radius:8px;
+              width:1100px;max-width:95vw;padding:18px 22px;color:var(--text)">
+    <div style="display:flex;justify-content:space-between;align-items:center;
+                margin-bottom:12px">
+      <h3 style="margin:0;font-size:1.1rem">Doubletten</h3>
+      <button id="dupes-close" style="background:transparent;border:none;
+              color:var(--text-dim);font-size:1.4rem;cursor:pointer">&times;</button>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;
+                font-size:0.9rem">
+      <label><input type="radio" name="dupes-mode" value="exact" checked>
+        exakt (Dateiinhalt identisch)</label>
+      <label><input type="radio" name="dupes-mode" value="near">
+        aehnliche Bilder</label>
+      <label style="margin-left:14px">Threshold (nur near):
+        <input id="dupes-thr" type="number" min="0" max="20" value="6"
+               style="width:50px;padding:4px;background:var(--bg-3);
+                      color:var(--text);border:1px solid var(--line);
+                      border-radius:4px"></label>
+      <button id="dupes-run" class="primary">Suchen</button>
+      <span id="dupes-info" style="color:var(--text-dim);margin-left:auto"></span>
+    </div>
+    <div id="dupes-result" style="font-size:0.9rem"></div>
   </div>
 </div>
 
@@ -990,6 +1022,90 @@ $("#s-rescan").addEventListener("click", async () => {
     showMsg("Re-Scan Fehler: " + await r.text(), "#f88");
   }
 });
+// ---- Doubletten ----
+function bytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024*1024) return (n/1024).toFixed(0) + " KB";
+  return (n/1024/1024).toFixed(1) + " MB";
+}
+$("#s-dupes").addEventListener("click", () => {
+  $("#dupes-result").innerHTML = "";
+  $("#dupes-info").textContent = "";
+  $("#dupes-modal").style.display = "flex";
+});
+$("#dupes-close").addEventListener("click", () => {
+  $("#dupes-modal").style.display = "none";
+});
+$("#dupes-run").addEventListener("click", async () => {
+  const mode = document.querySelector('input[name=dupes-mode]:checked').value;
+  const thr  = parseInt($("#dupes-thr").value) || 6;
+  $("#dupes-info").textContent = "suche...";
+  $("#dupes-result").innerHTML = "<em>laedt...</em>";
+  try {
+    const r = await fetch(`/api/duplicates?mode=${mode}&threshold=${thr}`)
+              .then(r=>r.json());
+    const groups = r.groups || [];
+    const note = r.note ? `<div style="color:var(--warn);margin-bottom:8px">${escapeHtml(r.note)}</div>` : "";
+    if (!groups.length) {
+      $("#dupes-result").innerHTML = note + `<div style="color:var(--text-dim)">keine Doubletten gefunden</div>`;
+      $("#dupes-info").textContent = "";
+      return;
+    }
+    $("#dupes-info").textContent = `${groups.length} Gruppen, ${groups.reduce((a,g)=>a+g.count,0)} Files insgesamt`;
+    let html = note;
+    for (const g of groups) {
+      html += `<div style="margin-bottom:14px;padding:10px;
+              background:var(--bg-3);border-radius:6px">
+        <div style="font-size:0.82rem;color:var(--text-dim);margin-bottom:8px">
+          ${g.count}× &nbsp; <code>${escapeHtml(g.key)}</code>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px">`;
+      for (const m of g.members) {
+        html += `<div data-id="${m.id}" style="border:1px solid var(--line);
+                 border-radius:4px;padding:6px;background:var(--bg-2);
+                 max-width:170px;font-size:0.78rem">
+          <img src="/thumb/${m.id}" style="width:150px;height:150px;
+               object-fit:cover;border-radius:3px;cursor:pointer"
+               onclick="fetch('/api/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:${m.id}})})">
+          <div style="margin-top:4px;color:var(--text-dim);
+               white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+               title="${escapeHtml(m.path)}">${escapeHtml(m.path)}</div>
+          <div style="color:var(--text-faint);font-size:0.7rem">${bytes(m.size||0)}</div>
+          <button class="dupes-del" data-id="${m.id}" data-path="${escapeHtml(m.path)}"
+                  style="margin-top:4px;width:100%;background:var(--err);
+                         color:#2a0606;border:none;padding:4px;border-radius:3px;
+                         cursor:pointer;font-weight:bold;font-size:0.78rem">
+            Loeschen
+          </button>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+    $("#dupes-result").innerHTML = html;
+    document.querySelectorAll(".dupes-del").forEach(b => {
+      b.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = parseInt(b.dataset.id);
+        const path = b.dataset.path;
+        if (!confirm(`Wirklich loeschen?\n\n${path}\n\nKein Undo!`)) return;
+        const rsp = await fetch("/api/duplicates/delete", {method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ids:[id]})});
+        const j = await rsp.json();
+        if (j.ok && j.deleted) {
+          // Eintrag aus DOM entfernen
+          const card = b.closest('[data-id="'+id+'"]');
+          if (card) card.remove();
+        } else {
+          alert("Fehler: " + JSON.stringify(j));
+        }
+      });
+    });
+  } catch (e) {
+    $("#dupes-result").innerHTML = `<div style="color:var(--err)">Fehler: ${escapeHtml(String(e))}</div>`;
+  }
+});
+
 $("#s-optimize").addEventListener("click", async () => {
   showMsg("optimiere DB (VACUUM + ANALYZE)...", "#888");
   try {

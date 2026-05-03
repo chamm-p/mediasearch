@@ -939,6 +939,141 @@ def api_open(payload: dict) -> dict:
         raise HTTPException(500, f"open failed: {e}")
     return {"ok": True}
 
+@app.get("/api/duplicates")
+def api_duplicates(mode: str = "exact", threshold: int = 6,
+                   limit_groups: int = 200) -> dict:
+    """Findet Doubletten.
+    mode='exact'   - identische Files (gleicher content_hash)
+    mode='near'    - aehnliche Bilder (Hamming-Distance der phash <= threshold)
+    Liefert Liste von Gruppen, jede mit den Mitgliedern (id, path, type, size)."""
+    root = current_root()
+    if root is None:
+        raise HTTPException(400, "kein Wurzelverzeichnis")
+    init_db(root)
+    threshold = max(0, min(int(threshold), 32))
+
+    conn = connect(root)
+    try:
+        if mode == "exact":
+            rows = conn.execute("""
+                SELECT content_hash, COUNT(*) c FROM files
+                WHERE content_hash IS NOT NULL AND content_hash <> ''
+                GROUP BY content_hash HAVING c > 1
+                ORDER BY c DESC LIMIT ?
+            """, (limit_groups,)).fetchall()
+            groups = []
+            for hr in rows:
+                ch = hr["content_hash"]
+                members = conn.execute(
+                    "SELECT id, rel_path, type, size FROM files "
+                    "WHERE content_hash=? ORDER BY mtime ASC",
+                    (ch,)).fetchall()
+                groups.append({
+                    "key":     ch[:12],
+                    "count":   hr["c"],
+                    "members": [{"id": m["id"], "path": _safe(m["rel_path"]),
+                                 "type": m["type"], "size": m["size"]}
+                                for m in members],
+                })
+            return {"mode": "exact", "groups": groups}
+
+        # mode='near': perceptual hash hamming distance
+        rows = conn.execute(
+            "SELECT id, rel_path, type, size, phash_int FROM files "
+            "WHERE type='image' AND phash_int IS NOT NULL"
+        ).fetchall()
+        if not rows:
+            return {"mode": "near", "groups": [],
+                    "note": "keine perceptual-hashes - bitte zuerst dedupe.py laufen lassen"}
+        # numpy-Vektorisierung: 64-bit popcount via XOR
+        try:
+            import numpy as np
+        except ImportError:
+            return {"mode": "near", "groups": [], "note": "numpy fehlt"}
+        ids   = np.array([r["id"] for r in rows], dtype=np.int64)
+        paths = [_safe(r["rel_path"]) for r in rows]
+        sizes = [r["size"] for r in rows]
+        types = [r["type"] for r in rows]
+        # phash_int kann negativ (signed) sein - in unsigned konvertieren
+        ph = np.array([r["phash_int"] & 0xFFFFFFFFFFFFFFFF for r in rows],
+                      dtype=np.uint64)
+        # Cluster aufbauen: jedes file zur Gruppe seines ersten Match-Vorgaengers
+        # Performance: O(N^2) mit numpy-XOR/popcount, OK bis ~100k
+        n = len(ph)
+        cluster = np.full(n, -1, dtype=np.int32)
+        cur_id = 0
+        for i in range(n):
+            if cluster[i] >= 0: continue
+            cluster[i] = cur_id
+            # Hamming distances of i vs i+1..n
+            xor = ph[i+1:] ^ ph[i]
+            # popcount per element via bytes
+            xb  = xor.view(np.uint8).reshape(-1, 8)
+            popc = np.unpackbits(xb, axis=1).sum(axis=1)
+            mask = popc <= threshold
+            for j_offset, m in enumerate(mask):
+                if not m: continue
+                j = i + 1 + j_offset
+                if cluster[j] < 0:
+                    cluster[j] = cur_id
+            cur_id += 1
+        # Gruppen sammeln
+        groups: dict[int, list[int]] = {}
+        for idx, gid in enumerate(cluster):
+            groups.setdefault(int(gid), []).append(idx)
+        out = []
+        for gid, members in groups.items():
+            if len(members) < 2: continue
+            out.append({
+                "key":     f"phash-{gid}",
+                "count":   len(members),
+                "members": [{"id": int(ids[m]), "path": paths[m],
+                             "type": types[m], "size": sizes[m]}
+                            for m in members],
+            })
+        out.sort(key=lambda g: -g["count"])
+        return {"mode": "near", "groups": out[:limit_groups]}
+    finally:
+        conn.close()
+
+
+@app.post("/api/duplicates/delete")
+def api_duplicates_delete(payload: dict) -> dict:
+    """Loescht angegebene Files (von Disk + DB) - DESTRUKTIV.
+    payload: {ids: [int]}"""
+    ids = [int(x) for x in (payload.get("ids") or [])]
+    if not ids:
+        raise HTTPException(400, "keine ids")
+    root = require_root()
+    deleted = errors = 0
+    conn = connect(root)
+    try:
+        ph = ",".join("?" * len(ids))
+        rows = conn.execute(
+            f"SELECT id, rel_path FROM files WHERE id IN ({ph})", ids
+        ).fetchall()
+        for r in rows:
+            p = (root / decode_surrogates(r["rel_path"])).resolve()
+            if not str(p).startswith(str(root)):
+                continue   # safety
+            try:
+                if p.exists():
+                    p.unlink()
+                # Thumb auch raus
+                try: thumb_path(root, r["id"]).unlink(missing_ok=True)
+                except Exception: pass
+                conn.execute("DELETE FROM files WHERE id=?", (r["id"],))
+                deleted += 1
+            except Exception as e:
+                logger.error("delete %s failed: %s", p, e)
+                errors += 1
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("duplicates/delete: %d deleted, %d errors", deleted, errors)
+    return {"ok": True, "deleted": deleted, "errors": errors}
+
+
 @app.post("/api/lora-export")
 def api_lora_export(payload: dict) -> dict:
     """Exportiert ausgewaehlte Bilder + Tag-Sidecars fuer LoRA-Training.

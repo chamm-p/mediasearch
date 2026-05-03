@@ -4,3 +4,5 @@ openai>=1.30
 Pillow>=10.0
 python-multipart
 jinja2
+imagehash>=4.3
+numpy>=1.24

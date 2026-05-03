@@ -291,10 +291,13 @@ CREATE TABLE IF NOT EXISTS files (
     error        TEXT DEFAULT '',
     tagged_at    REAL DEFAULT 0,
     seen_at      REAL DEFAULT 0,
-    started_at   REAL DEFAULT 0
+    started_at   REAL DEFAULT 0,
+    content_hash TEXT DEFAULT '',
+    phash_int    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
 CREATE INDEX IF NOT EXISTS idx_files_type ON files(type);
+CREATE INDEX IF NOT EXISTS idx_files_chash ON files(content_hash);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
     description, tags, manual_tags, rel_path,
@@ -333,6 +336,15 @@ def init_db(root: Path, force: bool = False) -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(files)").fetchall()}
         if "started_at" not in cols:
             conn.execute("ALTER TABLE files ADD COLUMN started_at REAL DEFAULT 0")
+        # Migration auf content_hash + phash_int (Doubletten-Erkennung)
+        if "content_hash" not in cols:
+            conn.execute("ALTER TABLE files ADD COLUMN content_hash TEXT DEFAULT ''")
+        if "phash_int" not in cols:
+            conn.execute("ALTER TABLE files ADD COLUMN phash_int INTEGER")
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_chash ON files(content_hash)")
+        except Exception:
+            pass
         # Migration auf manual_tags + neues FTS-Schema
         if "manual_tags" not in cols:
             conn.execute("ALTER TABLE files ADD COLUMN manual_tags TEXT DEFAULT ''")

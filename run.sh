@@ -101,6 +101,7 @@ case "${1:-ui}" in
     serve)          shift; exec python serve.py  "$@" ;;
     tag)            shift; exec python tag.py    "$@" ;;
     thumbs)         shift; exec python thumbs.py "$@" ;;
+    dedupe)         shift; exec python dedupe.py "$@" ;;
     setup-browser)  exec bash "$HERE/setup_browser.sh" ;;
-    *) echo "usage: $0 {ui|serve|tag|thumbs|setup-browser} [opts]"; exit 1 ;;
+    *) echo "usage: $0 {ui|serve|tag|thumbs|dedupe|setup-browser} [opts]"; exit 1 ;;
 esac
