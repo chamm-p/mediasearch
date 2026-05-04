@@ -251,24 +251,24 @@
        border-radius: 4px 4px 0 0; }
   .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .card.highlight {
-       border-color: #ff3344;
+       border-color: #ff33aa;
        z-index: 5;
        animation: highlight-pulse 1.2s ease-in-out infinite;
   }
   /* inset box-shadow ueberlebt overflow:hidden vom Grid: dicker
-     rot-leuchtender Innen-Ring + zusaetzlicher Aussen-Glow */
+     magenta-leuchtender Innen-Ring + zusaetzlicher Aussen-Glow */
   @keyframes highlight-pulse {
        0%, 100% {
          box-shadow:
-           inset 0 0 0 6px #ff3344,
-           inset 0 0 24px 6px rgba(255,51,68,0.5),
-           0 0 18px 4px rgba(255,51,68,0.7);
+           inset 0 0 0 6px #ff33aa,
+           inset 0 0 24px 6px rgba(255,51,170,0.5),
+           0 0 18px 4px rgba(255,51,170,0.7);
        }
        50% {
          box-shadow:
-           inset 0 0 0 6px #ff6677,
-           inset 0 0 32px 10px rgba(255,102,119,0.7),
-           0 0 30px 8px rgba(255,51,68,0.35);
+           inset 0 0 0 6px #ff66c2,
+           inset 0 0 32px 10px rgba(255,102,194,0.7),
+           0 0 30px 8px rgba(255,51,170,0.35);
        }
   }
   .card.selected { border-color: #2d5; }
@@ -417,7 +417,7 @@
     <button id="select-all" title="Alle auf dieser Seite auswaehlen">Alle</button>
     <button id="clear-sel" title="Auswahl leeren">Leer</button>
     <button id="slideshow-btn" class="primary" disabled>Slideshow</button>
-    <button id="play-btn" class="primary" disabled>Random Play</button>
+    <button id="play-btn" class="primary" disabled title="Random Video aus Auswahl/Treffer (mpv shuffle)">Random Video</button>
     <button id="lora-btn" disabled>LoRA</button>
     <button id="toggle-setup">Setup</button>
   </div>
@@ -879,7 +879,14 @@ function toggleSel(item, card) {
 function updateActionState() {
   const items = selected.size ? [...selected.values()] : results;
   $("#slideshow-btn").disabled = !items.some(r => r.type === "image");
-  $("#play-btn").disabled = items.length === 0;
+  // Random-Video: aktiv wenn (Auswahl mit Videos) ODER (keine Auswahl, Type-Filter laesst Videos zu)
+  if (selected.size) {
+    $("#play-btn").disabled = ![...selected.values()].some(r => r.type === "video");
+  } else {
+    const t = $("#type").value;
+    // wenn Filter "image" -> sicher keine Videos. Sonst: koennten welche da sein.
+    $("#play-btn").disabled = (t === "image");
+  }
   // LoRA-Export: nur mit Auswahl + min. ein Bild
   $("#lora-btn").disabled = selected.size === 0
     || ![...selected.values()].some(r => r.type === "image");
@@ -1501,6 +1508,18 @@ async function fetchAllImageHits() {
   return r.items || [];
 }
 
+async function fetchAllVideoHits() {
+  // Random-Video: alle matchenden Videos aus aktueller Suche.
+  // mpv shufflet selbst, daher Server-Order egal - nehmen wir Pfad fuer Stabilitaet.
+  const params = new URLSearchParams({
+    q: $("#q").value,
+    type: "video",
+    order: "path",
+  });
+  const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
+  return r.items || [];
+}
+
 function shuffled(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -1913,10 +1932,20 @@ function toggleFullscreen() {
 }
 
 $("#play-btn").addEventListener("click", async () => {
-  const items = selected.size ? [...selected.values()] : results;
-  if (!items.length) return;
+  // NUR Videos. Bei Auswahl: nur die selektierten Videos.
+  // Sonst: alle matchenden Videos der aktuellen Suche (auch ueber Seiten hinweg).
+  let videos;
+  if (selected.size) {
+    videos = [...selected.values()].filter(r => r.type === "video");
+  } else {
+    videos = await fetchAllVideoHits();
+  }
+  if (!videos.length) {
+    alert("keine Videos in der Auswahl/Suche gefunden");
+    return;
+  }
   await fetch("/api/play", {method:"POST", headers:{"Content-Type":"application/json"},
-                            body: JSON.stringify({ids: items.map(i=>i.id)})});
+                            body: JSON.stringify({ids: videos.map(i=>i.id)})});
 });
 
 // ---- LoRA Export ----
