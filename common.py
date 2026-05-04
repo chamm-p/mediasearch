@@ -303,7 +303,7 @@ CREATE TABLE IF NOT EXISTS files (
 );
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
 CREATE INDEX IF NOT EXISTS idx_files_type ON files(type);
--- idx_files_chash wird in init_db NACH der content_hash-Migration angelegt
+-- idx_files_chash + idx_files_phash werden in init_db NACH der Migration angelegt
 
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
     description, tags, manual_tags, rel_path,
@@ -349,6 +349,7 @@ def init_db(root: Path, force: bool = False) -> None:
             conn.execute("ALTER TABLE files ADD COLUMN phash_int INTEGER")
         try:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_chash ON files(content_hash)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_phash ON files(phash_int)")
         except Exception:
             pass
         # Migration auf manual_tags + neues FTS-Schema
