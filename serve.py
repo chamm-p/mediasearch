@@ -1256,15 +1256,15 @@ def api_play(payload: dict) -> dict:
             continue
     if not paths: raise HTTPException(404, "none of the ids resolved")
     # Eines = endlos loopen bis Esc; mehrere = playlist mit shuffle+loop
-    # --fs = fullscreen sofort beim Start
-    # --input-conf = unsere custom Hotkeys (z.B. b/n fuer Rotation)
+    # --fs = fullscreen
+    # --script = Lua-Script mit unseren Hotkeys (b/n/B fuer Video-Rotation)
     mpv_extra: list[str] = ["--fs"]
-    custom_input = (HERE / "mpv" / "input.conf").resolve()
-    if custom_input.is_file():
-        mpv_extra.append(f"--input-conf={custom_input}")
-        logger.info("mpv input-conf: %s", custom_input)
+    rotate_script = (HERE / "mpv" / "rotate.lua").resolve()
+    if rotate_script.is_file():
+        mpv_extra.append(f"--script={rotate_script}")
+        logger.info("mpv script: %s", rotate_script)
     else:
-        logger.warning("mpv input-conf NICHT gefunden: %s", custom_input)
+        logger.warning("mpv script NICHT gefunden: %s", rotate_script)
     if len(paths) == 1:
         cmd = ["mpv", *mpv_extra, "--loop-file=inf", paths[0]]
     else:
