@@ -957,33 +957,46 @@ def api_open(payload: dict) -> dict:
 
 @app.get("/api/duplicates")
 def api_duplicates(mode: str = "exact", threshold: int = 6,
-                   limit_groups: int = 200) -> dict:
+                   limit_groups: int = 200,
+                   type: Optional[str] = None) -> dict:
     """Findet Doubletten.
     mode='exact'   - identische Files (gleicher content_hash)
-    mode='near'    - aehnliche Bilder (Hamming-Distance der phash <= threshold)
+    mode='near'    - aehnliche Bilder/Videos (Hamming-Distance phash <= threshold)
+    type='image'|'video'|None  - filtert auf Medientyp
     Liefert Liste von Gruppen, jede mit den Mitgliedern (id, path, type, size)."""
     root = current_root()
     if root is None:
         raise HTTPException(400, "kein Wurzelverzeichnis")
     init_db(root)
     threshold = max(0, min(int(threshold), 32))
+    type_filter = type if type in ("image", "video") else None
 
     conn = connect(root)
     try:
         if mode == "exact":
-            rows = conn.execute("""
+            type_clause = " AND type=?" if type_filter else ""
+            params: list = [limit_groups]
+            if type_filter:
+                params = [type_filter, limit_groups]
+            rows = conn.execute(f"""
                 SELECT content_hash, COUNT(*) c FROM files
                 WHERE content_hash IS NOT NULL AND content_hash <> ''
+                {type_clause}
                 GROUP BY content_hash HAVING c > 1
                 ORDER BY c DESC LIMIT ?
-            """, (limit_groups,)).fetchall()
+            """, params).fetchall()
             groups = []
             for hr in rows:
                 ch = hr["content_hash"]
+                m_params: list = [ch]
+                m_clause = ""
+                if type_filter:
+                    m_clause = " AND type=?"
+                    m_params.append(type_filter)
                 members = conn.execute(
                     "SELECT id, rel_path, type, size FROM files "
-                    "WHERE content_hash=? ORDER BY mtime ASC",
-                    (ch,)).fetchall()
+                    f"WHERE content_hash=?{m_clause} ORDER BY mtime ASC",
+                    m_params).fetchall()
                 groups.append({
                     "key":     ch[:12],
                     "count":   hr["c"],
@@ -997,10 +1010,13 @@ def api_duplicates(mode: str = "exact", threshold: int = 6,
         # Bilder werden direkt gehasht, Videos ueber den mittleren Frame.
         # Wir gruppieren ueber alle Files mit phash gemeinsam, da ein Video
         # und ein extrahiertes Standbild oft denselben pHash haben (legitim).
-        rows = conn.execute(
-            "SELECT id, rel_path, type, size, phash_int FROM files "
-            "WHERE phash_int IS NOT NULL"
-        ).fetchall()
+        sql = ("SELECT id, rel_path, type, size, phash_int FROM files "
+               "WHERE phash_int IS NOT NULL")
+        params = []
+        if type_filter:
+            sql += " AND type=?"
+            params.append(type_filter)
+        rows = conn.execute(sql, params).fetchall()
         if not rows:
             return {"mode": "near", "groups": [],
                     "note": "keine perceptual-hashes - bitte zuerst dedupe.py laufen lassen"}

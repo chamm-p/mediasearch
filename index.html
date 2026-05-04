@@ -552,7 +552,15 @@
         exakt (Dateiinhalt identisch)</label>
       <label><input type="radio" name="dupes-mode" value="near">
         aehnliche Bilder/Videos</label>
-      <label style="margin-left:14px">Threshold (nur near):
+      <label style="margin-left:14px">Typ:
+        <select id="dupes-type"
+                style="padding:4px 8px;background:var(--bg-3);color:var(--text);
+                       border:1px solid var(--line);border-radius:4px">
+          <option value="">Alle</option>
+          <option value="image">nur Bilder</option>
+          <option value="video">nur Videos</option>
+        </select></label>
+      <label>Threshold (nur near):
         <input id="dupes-thr" type="number" min="0" max="20" value="6"
                style="width:50px;padding:4px;background:var(--bg-3);
                       color:var(--text);border:1px solid var(--line);
@@ -1222,11 +1230,13 @@ $("#dup-exec-go").addEventListener("click", async () => {
 $("#dupes-run").addEventListener("click", async () => {
   const mode = document.querySelector('input[name=dupes-mode]:checked').value;
   const thr  = parseInt($("#dupes-thr").value) || 6;
+  const type = $("#dupes-type").value;
   $("#dupes-info").textContent = "suche...";
   $("#dupes-result").innerHTML = "<em>laedt...</em>";
   try {
-    const r = await fetch(`/api/duplicates?mode=${mode}&threshold=${thr}`)
-              .then(r=>r.json());
+    const params = new URLSearchParams({mode, threshold: String(thr)});
+    if (type) params.set("type", type);
+    const r = await fetch("/api/duplicates?" + params).then(r=>r.json());
     const groups = r.groups || [];
     const note = r.note ? `<div style="color:var(--warn);margin-bottom:8px">${escapeHtml(r.note)}</div>` : "";
     if (!groups.length) {
