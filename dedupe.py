@@ -99,6 +99,8 @@ def cmd_dedupe(args: argparse.Namespace) -> None:
         raise SystemExit(f"not a directory: {root}")
     init_db(root)
 
+    # EINE Connection fuer den ganzen Run - vermeidet WAL-Bloat durch
+    # tausende Open/Close-Zyklen.
     conn = connect(root)
     try:
         sql = "SELECT id, rel_path, type, content_hash, phash_int FROM files"
@@ -113,67 +115,71 @@ def cmd_dedupe(args: argparse.Namespace) -> None:
             sql += " WHERE " + " AND ".join(wheres)
         sql += " ORDER BY id"
         rows = conn.execute(sql, params).fetchall()
+
+        total = len(rows)
+        print(f"Dedupe-Hashing: {total} Files")
+        if not total:
+            return
+
+        done = skipped = failed = 0
+        t0 = time.time()
+        last_print = t0
+        last_checkpoint = t0
+        BATCH = 50
+        pending: list[tuple] = []
+
+        def flush():
+            if not pending:
+                return
+            conn.executemany(
+                "UPDATE files SET content_hash=?, phash_int=? WHERE id=?",
+                pending,
+            )
+            conn.commit()
+            pending.clear()
+
+        for i, r in enumerate(rows, 1):
+            fid = r["id"]; rel = r["rel_path"]; kind = r["type"]
+            src = root / decode_surrogates(rel)
+            if not src.exists():
+                skipped += 1
+                continue
+            existing_chash = (r["content_hash"] or "") if not args.all else ""
+            existing_phash = r["phash_int"]      if not args.all else None
+            chash = existing_chash if existing_chash else content_hash(src)
+            if existing_phash is not None:
+                phash = existing_phash
+            else:
+                phash = perceptual_hash(src, kind, root=root, file_id=fid)
+            if chash:
+                pending.append((chash, phash, fid))
+                done += 1
+            else:
+                failed += 1
+
+            if len(pending) >= BATCH:
+                flush()
+
+            now = time.time()
+            # Alle ~30s WAL-Checkpoint, damit die WAL-Datei nicht waechst
+            # und nachfolgende Reads/Writes schnell bleiben.
+            if now - last_checkpoint >= 30:
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                last_checkpoint = now
+            if now - last_print >= 2.0 or i == total:
+                rate = i / max(now - t0, 0.001)
+                eta = (total - i) / rate if rate > 0 else 0
+                print(f"[{i}/{total}] done={done} skipped={skipped} "
+                      f"failed={failed}  ({rate:.1f}/s, eta {eta/60:.1f}min)",
+                      flush=True)
+                last_print = now
+
+        flush()
+        # finaler Checkpoint - WAL leer machen
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        print(f"Fertig in {time.time()-t0:.1f}s: done={done} skipped={skipped} failed={failed}")
     finally:
         conn.close()
-
-    total = len(rows)
-    print(f"Dedupe-Hashing: {total} Files")
-    if not total:
-        return
-
-    done = skipped = failed = 0
-    t0 = time.time()
-    last_print = t0
-    BATCH = 50
-    pending: list[tuple] = []  # (chash, phash, id)
-
-    def flush(rows_to_write):
-        if not rows_to_write: return
-        c = connect(root)
-        try:
-            c.executemany(
-                "UPDATE files SET content_hash=?, phash_int=? WHERE id=?",
-                rows_to_write,
-            )
-            c.commit()
-        finally:
-            c.close()
-
-    for i, r in enumerate(rows, 1):
-        fid = r["id"]; rel = r["rel_path"]; kind = r["type"]
-        src = root / decode_surrogates(rel)
-        if not src.exists():
-            skipped += 1
-            continue
-        # Bestehende Werte uebernehmen, nur fehlende neu berechnen.
-        # Spart bei Videos das erneute Lesen der ganzen Datei wenn nur
-        # phash_int gefehlt hat (z.B. nach Migration auf Video-pHash).
-        existing_chash = (r["content_hash"] or "") if not args.all else ""
-        existing_phash = r["phash_int"]      if not args.all else None
-        chash = existing_chash if existing_chash else content_hash(src)
-        if existing_phash is not None:
-            phash = existing_phash
-        else:
-            phash = perceptual_hash(src, kind, root=root, file_id=fid)
-        if chash:
-            pending.append((chash, phash, fid))
-            done += 1
-        else:
-            failed += 1
-
-        if len(pending) >= BATCH:
-            flush(pending); pending = []
-
-        if time.time() - last_print >= 2.0 or i == total:
-            rate = i / max(time.time() - t0, 0.001)
-            eta = (total - i) / rate if rate > 0 else 0
-            print(f"[{i}/{total}] done={done} skipped={skipped} "
-                  f"failed={failed}  ({rate:.1f}/s, eta {eta/60:.1f}min)",
-                  flush=True)
-            last_print = time.time()
-
-    flush(pending)
-    print(f"Fertig in {time.time()-t0:.1f}s: done={done} skipped={skipped} failed={failed}")
 
 
 def build_parser() -> argparse.ArgumentParser:
