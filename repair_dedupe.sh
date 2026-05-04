@@ -19,11 +19,20 @@ echo "==============================================="
 
 # 1) venv check
 if [ ! -d .venv ]; then
-    echo "FEHLER: .venv fehlt. Erst './run.sh ui' starten oder 'python3 -m venv .venv && .venv/bin/pip install -r requirements.txt'"
+    echo "FEHLER: .venv fehlt. Erst './run.sh ui' starten oder 'python3 -m venv .venv'"
     exit 1
 fi
 
-echo
+# 2) ownership check - falls .venv root gehoert, Hinweis und ggf. fixen
+VENV_OWNER=$(stat -c '%U' .venv 2>/dev/null || echo "?")
+if [ "$VENV_OWNER" = "root" ] && [ "$(whoami)" != "root" ]; then
+    echo "Hinweis: .venv gehoert root (vermutlich frueher mit sudo angefasst)."
+    echo "Ich fixe die Ownership einmalig (benoetigt Passwort)..."
+    sudo chown -R "$USER":"$(id -gn)" .venv
+    echo "  done."
+    echo
+fi
+
 echo "--> Installiere/aktualisiere requirements (imagehash, numpy, ...)"
 .venv/bin/pip install -q -r requirements.txt
 echo
