@@ -1203,11 +1203,12 @@ def api_play(payload: dict) -> dict:
             continue
     if not paths: raise HTTPException(404, "none of the ids resolved")
     # Eines = endlos loopen bis Esc; mehrere = playlist mit shuffle+loop
+    # --fs = fullscreen sofort beim Start
     if len(paths) == 1:
-        cmd = ["mpv", "--loop-file=inf", paths[0]]
+        cmd = ["mpv", "--fs", "--loop-file=inf", paths[0]]
     else:
         random.shuffle(paths)
-        cmd = ["mpv", "--shuffle", "--loop-playlist=inf", *paths]
+        cmd = ["mpv", "--fs", "--shuffle", "--loop-playlist=inf", *paths]
     try:
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
