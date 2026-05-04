@@ -96,6 +96,63 @@ cmd_ui() {
     exec python serve.py "$@"
 }
 
+show_help() {
+cat <<EOF
+mediasearch - LLM-Vision-Tagging und -Suche fuer lokale Foto/Video-Sammlung
+
+Aufruf:  ./run.sh <command> [opts]
+
+Commands:
+  ui              Web-UI starten (Default wenn kein Command angegeben)
+                  Startet serve.py + oeffnet Browser (portable falls vorhanden)
+                  Browser-Pfad in dieser Reihenfolge:
+                    browser/firefox/firefox
+                    browser/*.AppImage
+                    System: firefox, chromium, google-chrome, brave-browser
+                    xdg-open
+
+  serve           Nur serve.py, kein Browser (z.B. fuer Headless / Cron)
+                    --host 0.0.0.0          (oder via config.toml)
+                    --port 8765
+                  Read-Args: oeffnet ohne Root, falls in settings.json gesetzt
+
+  tag <root>      LLM-Vision-Tagging via CLI (was die UI im Hintergrund macht)
+                    --limit N               max Files in diesem Run
+                    --workers N             parallele LLM-Calls
+                    --retry-errors          Fehlerhafte Files nochmal probieren
+                    --retag                 alle 'done'-Files neu taggen
+                    --only image|video      nur ein Typ
+                    --no-scan               Filesystem-Scan ueberspringen
+                    --scan-only             nur Scan, kein LLM-Tagging
+                    --endpoint URL          LLM-Endpoint (sonst aus config.toml)
+                    --model NAME            LLM-Model (sonst aus config.toml)
+
+  thumbs <root>   Thumbnails (240x240) neu erzeugen (ohne LLM)
+                    --only image|video
+                    --missing-only          nur fehlende Thumbs
+
+  dedupe <root>   Doubletten-Hashes berechnen (BLAKE2b + Perceptual Hash)
+                    --all                   alle Files neu hashen
+                    --only image|video      nur ein Typ
+                  Anschliessend im UI: Setup -> 'Doubletten' anklicken
+
+  setup-browser   Laedt portable Firefox nach browser/ (Linux x86_64, ~80 MB)
+                  Sprache via env: LANG_TAG=de (default) / en / fr / ...
+
+  help            diese Uebersicht
+
+Beispiele:
+  ./run.sh                                    # = ./run.sh ui
+  ./run.sh tag /pfad/zu/medien --limit 500
+  ./run.sh dedupe /pfad/zu/medien --only image
+  ./run.sh thumbs /pfad/zu/medien --missing-only
+
+Config:    config.toml (LLM, Server, Viewers, ...)
+DB:        data/<root-hash>/mediasearch.db (lokal, portabel)
+Logs:      mediasearch.log
+EOF
+}
+
 case "${1:-ui}" in
     ui)             shift; cmd_ui "$@" ;;
     serve)          shift; exec python serve.py  "$@" ;;
@@ -103,5 +160,10 @@ case "${1:-ui}" in
     thumbs)         shift; exec python thumbs.py "$@" ;;
     dedupe)         shift; exec python dedupe.py "$@" ;;
     setup-browser)  exec bash "$HERE/setup_browser.sh" ;;
-    *) echo "usage: $0 {ui|serve|tag|thumbs|dedupe|setup-browser} [opts]"; exit 1 ;;
+    help|-h|--help) show_help ;;
+    *)  echo "Unbekanntes Command: ${1}"
+        echo
+        show_help
+        exit 1
+        ;;
 esac
