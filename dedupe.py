@@ -45,7 +45,21 @@ def _phash_pil(im: Image.Image) -> int | None:
         return None
 
 
-def perceptual_hash_image(path: Path) -> int | None:
+def perceptual_hash_image(path: Path, root: Path | None = None,
+                          file_id: int | None = None) -> int | None:
+    """pHash auf Bild. Schneller Pfad: existierendes 240x240-Thumbnail nutzen
+    (gleicher pHash wie Original, ~30x schneller einzulesen). Fallback Original."""
+    if root is not None and file_id is not None:
+        tp = thumb_path(root, file_id)
+        if tp.exists():
+            try:
+                with Image.open(tp) as im:
+                    im = im.convert("RGB")
+                    v = _phash_pil(im)
+                    if v is not None:
+                        return v
+            except Exception:
+                pass
     try:
         with Image.open(path) as im:
             im = im.convert("RGB")
@@ -87,7 +101,7 @@ def perceptual_hash(path: Path, kind: str,
                     root: Path | None = None,
                     file_id: int | None = None) -> int | None:
     if kind == "image":
-        return perceptual_hash_image(path)
+        return perceptual_hash_image(path, root, file_id)
     if kind == "video" and root is not None and file_id is not None:
         return perceptual_hash_video(path, root, file_id)
     return None
@@ -164,7 +178,10 @@ def cmd_dedupe(args: argparse.Namespace) -> None:
             # Alle ~30s WAL-Checkpoint, damit die WAL-Datei nicht waechst
             # und nachfolgende Reads/Writes schnell bleiben.
             if now - last_checkpoint >= 30:
-                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                # TRUNCATE schreibt zurueck UND truncated die WAL-Datei -
+                # haelt sie damit wirklich klein. Wir haben keine
+                # parallelen Reader, also unkritisch.
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 last_checkpoint = now
             if now - last_print >= 2.0 or i == total:
                 rate = i / max(now - t0, 0.001)
