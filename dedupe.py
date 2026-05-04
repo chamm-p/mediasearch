@@ -17,6 +17,16 @@ from pathlib import Path
 
 from PIL import Image
 
+# imagehash ist Pflicht-Dependency: Fehler frueh und deutlich melden
+try:
+    import imagehash  # noqa: F401
+except ImportError as e:
+    raise SystemExit(
+        f"FEHLER: Paket 'imagehash' ist nicht installiert ({e}).\n"
+        "Bitte einmal:  .venv/bin/pip install -r requirements.txt\n"
+        "Ohne imagehash kann phash_int nicht berechnet werden, dedupe wuerde "
+        "jeden Run alle Files wiederholen ohne Fortschritt.")
+
 from common import (connect, decode_surrogates, extract_video_frame,
                     init_db, thumb_path, video_duration)
 
