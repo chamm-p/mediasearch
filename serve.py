@@ -1030,12 +1030,13 @@ def api_duplicates(mode: str = "exact", threshold: int = 6,
             params: list = [limit_groups]
             if type_filter:
                 params = [type_filter, limit_groups]
+            # Gruppen sortiert nach groesster Datei in der Gruppe (DESC)
             rows = conn.execute(f"""
-                SELECT content_hash, COUNT(*) c FROM files
+                SELECT content_hash, COUNT(*) c, MAX(size) max_size FROM files
                 WHERE content_hash IS NOT NULL AND content_hash <> ''
                 {type_clause}
                 GROUP BY content_hash HAVING c > 1
-                ORDER BY c DESC LIMIT ?
+                ORDER BY max_size DESC LIMIT ?
             """, params).fetchall()
             groups = []
             for hr in rows:
@@ -1045,9 +1046,10 @@ def api_duplicates(mode: str = "exact", threshold: int = 6,
                 if type_filter:
                     m_clause = " AND type=?"
                     m_params.append(type_filter)
+                # Innerhalb der Gruppe: groesste Datei zuoberst
                 members = conn.execute(
                     "SELECT id, rel_path, type, size FROM files "
-                    f"WHERE content_hash=?{m_clause} ORDER BY mtime ASC",
+                    f"WHERE content_hash=?{m_clause} ORDER BY size DESC, mtime ASC",
                     m_params).fetchall()
                 groups.append({
                     "key":     ch[:12],
@@ -1111,14 +1113,18 @@ def api_duplicates(mode: str = "exact", threshold: int = 6,
         out = []
         for gid, members in groups.items():
             if len(members) < 2: continue
+            # Mitglieder nach Groesse absteigend sortieren
+            members_sorted = sorted(members, key=lambda m: -sizes[m])
             out.append({
                 "key":     f"phash-{gid}",
-                "count":   len(members),
+                "count":   len(members_sorted),
+                "max_size": max(sizes[m] for m in members_sorted),
                 "members": [{"id": int(ids[m]), "path": paths[m],
                              "type": types[m], "size": sizes[m]}
-                            for m in members],
+                            for m in members_sorted],
             })
-        out.sort(key=lambda g: -g["count"])
+        # Gruppen nach groesster Datei absteigend
+        out.sort(key=lambda g: -g["max_size"])
         return {"mode": "near", "groups": out[:limit_groups]}
     finally:
         conn.close()
