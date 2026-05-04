@@ -686,8 +686,12 @@ let currentOffset = 0;
 
 // Page-Cache: hält die letzten N Seiten im RAM, damit Back/Forth (gerade
 // bei Random-Sortierung) konsistent funktioniert.
-const PAGE_CACHE_SIZE = 10;
+const PAGE_CACHE_SIZE = 30;
 const _pageCache = new Map();   // offset -> {results, total}
+// Geschuetzter Offset (z.B. die Seite von der die Slideshow geoeffnet wurde
+// und alle Seiten die dadurch besucht wurden) - werden bei LRU-Eviction
+// verschont, damit closeSlideshow zuverlaessig zurueck springen kann.
+let _pinnedOffsets = new Set();
 let _cacheSig = "";
 function _querySig() {
   return [$("#q").value, $("#type").value, $("#order").value,
@@ -695,10 +699,15 @@ function _querySig() {
 }
 function _cachePut(offset, results, total) {
   _pageCache.set(offset, {results: results.slice(), total});
-  if (_pageCache.size > PAGE_CACHE_SIZE) {
-    // aelteste Insertion wegwerfen (Map iteriert in Insertion-Order)
-    const oldestKey = _pageCache.keys().next().value;
-    _pageCache.delete(oldestKey);
+  // LRU-Eviction die "gepinnte" Offsets verschont
+  while (_pageCache.size > PAGE_CACHE_SIZE) {
+    let evicted = false;
+    for (const k of _pageCache.keys()) {
+      if (!_pinnedOffsets.has(k)) {
+        _pageCache.delete(k); evicted = true; break;
+      }
+    }
+    if (!evicted) break;   // alle gepinnt - lieber wachsen lassen
   }
 }
 
@@ -711,6 +720,7 @@ async function search(opts={}) {
   const sig = _querySig();
   if (sig !== _cacheSig) {
     _pageCache.clear();
+    _pinnedOffsets.clear();
     _cacheSig = sig;
   }
   // Treffer aus dem Cache wenn moeglich
@@ -1616,11 +1626,13 @@ function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
     : 0;
   if (slideIdx < 0) slideIdx = 0;
   slidePaused = true;
-  slideTextOn = true;     // Default: Text-Overlay an
+  slideTextOn = true;
   $("#slide-pause").textContent = "Play";
   $("#slide-mode").textContent  = "Serial";
   $("#slideshow").classList.add("active");
-  buildSlideMTagBar();    // einmalig Tag-Buttons bauen
+  // Aktuelle Seite pinnen, damit sie bis Slideshow-Ende im Cache bleibt
+  _pinnedOffsets.add(currentOffset);
+  buildSlideMTagBar();
   if (slideOrder.length) showSlide();
   else $("#slide-info").textContent = "lade Trefferliste...";
 
@@ -1872,68 +1884,67 @@ async function closeSlideshow() {
   $("#slide-text").classList.remove("active");
   $("#slide-loading").classList.remove("active");
   slideTextOn = false;
-  if (lastId == null) return;
-  console.log("[closeSlideshow] lastId =", lastId);
-  // 1) Bild bereits auf aktueller Seite?
-  if (scrollToCard(lastId)) {
-    console.log("[closeSlideshow] -> bereits sichtbar");
-    return;
-  }
-  // 2) In den gecachten Seiten suchen (bei Random-Sort ist locate unzuverlaessig,
-  //    da der Server bei jeder Anfrage anders mischt)
-  for (const [cachedOffset, entry] of _pageCache.entries()) {
-    if (entry.results && entry.results.some(r => r.id === lastId)) {
-      console.log("[closeSlideshow] in Cache gefunden bei offset", cachedOffset);
-      await search({offset: cachedOffset, reset: false, scrollTop: false});
-      if (scrollToCard(lastId)) return;
-      // Falls scrollToCard fehlschlaegt: rAF retry
-      requestAnimationFrame(() => scrollToCard(lastId));
+  try {
+    if (lastId == null) return;
+    console.log("[closeSlideshow] lastId =", lastId);
+    // 1) Bild bereits auf aktueller Seite?
+    if (scrollToCard(lastId)) {
+      console.log("[closeSlideshow] -> bereits sichtbar");
       return;
     }
-  }
-  // 3) Random-Sort? Dann bringt locate nichts - abbrechen.
-  if ($("#order").value === "random") {
-    console.log("[closeSlideshow] random-sort & nicht im cache - kein deterministischer Sprung moeglich");
-    return;
-  }
-  // 4) Server fragt: an welcher Position in der aktuellen Suche liegt das Bild?
-  const params = new URLSearchParams({
-    file_id: String(lastId),
-    q:    $("#q").value,
-    type: $("#type").value,
-    order: $("#order").value,
-  });
-  let offset = -1;
-  try {
-    const resp = await fetch("/api/search/locate?" + params);
-    if (!resp.ok) {
-      console.warn("[closeSlideshow] /api/search/locate liefert " + resp.status
-                   + " - serve.py neu starten?");
-    } else {
-      const j = await resp.json();
-      offset = j.offset;
-      console.log("[closeSlideshow] locate -> offset", offset,
-                  "(scanned", j.total_scanned, ")");
-    }
-  } catch (e) {
-    console.warn("[closeSlideshow] locate fehlgeschlagen:", e);
-  }
-  if (offset < 0) {
-    console.log("[closeSlideshow] Bild nicht im aktuellen Suchresultat");
-    return;
-  }
-  const pageSize = parseInt($("#limit-q").value) || 200;
-  const targetOffset = Math.floor(offset / pageSize) * pageSize;
-  console.log("[closeSlideshow] springe zu offset", targetOffset);
-  await search({offset: targetOffset, reset: false, scrollTop: false});
-  // direkt versuchen; falls DOM noch nicht ready, naechsten Frame retry
-  if (!scrollToCard(lastId)) {
-    requestAnimationFrame(() => {
-      if (!scrollToCard(lastId)) {
-        // letzte Chance: kurz warten bis Bilder geladen sind
-        setTimeout(() => scrollToCard(lastId), 200);
+    // 2) In den gecachten Seiten suchen
+    for (const [cachedOffset, entry] of _pageCache.entries()) {
+      if (entry.results && entry.results.some(r => r.id === lastId)) {
+        console.log("[closeSlideshow] in Cache gefunden bei offset", cachedOffset);
+        await search({offset: cachedOffset, reset: false, scrollTop: false});
+        if (scrollToCard(lastId)) return;
+        requestAnimationFrame(() => scrollToCard(lastId));
+        return;
       }
+    }
+    // 3) Random-Sort? Dann bringt locate nichts - abbrechen.
+    if ($("#order").value === "random") {
+      console.log("[closeSlideshow] random-sort & nicht im cache - kein Sprung");
+      return;
+    }
+    // 4) Server fragt nach Position
+    const params = new URLSearchParams({
+      file_id: String(lastId),
+      q:    $("#q").value,
+      type: $("#type").value,
+      order: $("#order").value,
     });
+    let offset = -1;
+    try {
+      const resp = await fetch("/api/search/locate?" + params);
+      if (resp.ok) {
+        const j = await resp.json();
+        offset = j.offset;
+        console.log("[closeSlideshow] locate -> offset", offset);
+      } else {
+        console.warn("[closeSlideshow] locate-Status " + resp.status);
+      }
+    } catch (e) {
+      console.warn("[closeSlideshow] locate fehlgeschlagen:", e);
+    }
+    if (offset < 0) {
+      console.log("[closeSlideshow] Bild nicht im aktuellen Suchresultat");
+      return;
+    }
+    const pageSize = parseInt($("#limit-q").value) || 200;
+    const targetOffset = Math.floor(offset / pageSize) * pageSize;
+    console.log("[closeSlideshow] springe zu offset", targetOffset);
+    await search({offset: targetOffset, reset: false, scrollTop: false});
+    if (!scrollToCard(lastId)) {
+      requestAnimationFrame(() => {
+        if (!scrollToCard(lastId)) {
+          setTimeout(() => scrollToCard(lastId), 200);
+        }
+      });
+    }
+  } finally {
+    // Pins freigeben - ab jetzt darf der Cache normal evicten
+    _pinnedOffsets.clear();
   }
 }
 
