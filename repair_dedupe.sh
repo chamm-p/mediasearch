@@ -17,42 +17,23 @@ echo "==============================================="
 echo " mediasearch dedupe-Repair"
 echo "==============================================="
 
-# 1) venv check & ggf. rebuild
-need_rebuild=0
-if [ ! -d .venv ]; then
-    echo "Hinweis: .venv fehlt. Wird angelegt."
-    need_rebuild=1
-elif ! .venv/bin/pip --version >/dev/null 2>&1; then
-    echo "Hinweis: .venv ist kaputt (vermutlich von einem anderen System uebertragen,"
-    echo "  z.B. Mac-Pfade /Users/... auf Linux). Wird neu gebaut."
-    need_rebuild=1
-fi
-
-if [ "$need_rebuild" = "1" ]; then
-    # alte .venv aufraeumen, ggf. mit sudo wenn root-owned
-    if [ -d .venv ]; then
-        VENV_OWNER=$(stat -c '%U' .venv 2>/dev/null || echo "?")
-        if [ "$VENV_OWNER" = "root" ] && [ "$(whoami)" != "root" ]; then
-            echo "  alte .venv gehoert root, brauche einmal sudo zum Loeschen..."
-            sudo rm -rf .venv
-        else
-            rm -rf .venv
-        fi
+# 1) .venv komplett neu bauen - vermeidet jede Art von verbogenen
+#    Shebangs, falschen Pfaden oder root-Ownership aus frueheren Runs.
+echo "--> Raeume alte .venv (falls vorhanden) und baue neu in $HERE/.venv"
+if [ -d .venv ]; then
+    VENV_OWNER=$(stat -c '%U' .venv 2>/dev/null || echo "?")
+    if [ "$VENV_OWNER" = "root" ] && [ "$(whoami)" != "root" ]; then
+        echo "  alte .venv gehoert root - brauche einmal sudo zum Entfernen"
+        sudo rm -rf .venv
+    else
+        rm -rf .venv
     fi
-    python3 -m venv .venv
-    .venv/bin/pip install -q --upgrade pip
 fi
+python3 -m venv .venv
+.venv/bin/pip install -q --upgrade pip
 
-# 2) ownership pruefen falls .venv existiert aber root-owned (frueher sudo)
-VENV_OWNER=$(stat -c '%U' .venv 2>/dev/null || echo "?")
-if [ "$VENV_OWNER" = "root" ] && [ "$(whoami)" != "root" ]; then
-    echo "Hinweis: .venv gehoert root - fixe Ownership (benoetigt Passwort)..."
-    sudo chown -R "$USER":"$(id -gn)" .venv
-    echo "  done."
-    echo
-fi
-
-echo "--> Installiere/aktualisiere requirements (imagehash, numpy, ...)"
+echo
+echo "--> Installiere requirements (imagehash, numpy, ...)"
 .venv/bin/pip install -q -r requirements.txt
 echo
 
