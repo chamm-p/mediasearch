@@ -416,8 +416,10 @@
   <div class="right">
     <button id="select-all" title="Alle auf dieser Seite auswaehlen">Alle</button>
     <button id="clear-sel" title="Auswahl leeren">Leer</button>
-    <button id="slideshow-btn" class="primary" disabled>Slideshow</button>
-    <button id="play-btn" class="primary" disabled title="Random Video aus Auswahl/Treffer (mpv shuffle)">Random Video</button>
+    <button id="slideshow-btn" class="primary" disabled
+            title="Slideshow starten (S) - nur Bilder, sequentiell ab erstem Treffer">Slideshow [S]</button>
+    <button id="play-btn" class="primary" disabled
+            title="Random Video (V) - ein zufaelliges Video aus den Treffern, mpv loopt bis Esc">Random Video [V]</button>
     <button id="lora-btn" disabled>LoRA</button>
     <button id="toggle-setup">Setup</button>
   </div>
@@ -788,6 +790,12 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault(); $("#page-next").click();
   } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
     e.preventDefault(); $("#page-prev").click();
+  } else if (e.key === "s" || e.key === "S") {
+    if ($("#slideshow-btn").disabled) return;
+    e.preventDefault(); $("#slideshow-btn").click();
+  } else if (e.key === "v" || e.key === "V") {
+    if ($("#play-btn").disabled) return;
+    e.preventDefault(); $("#play-btn").click();
   }
 });
 
@@ -1932,8 +1940,8 @@ function toggleFullscreen() {
 }
 
 $("#play-btn").addEventListener("click", async () => {
-  // NUR Videos. Bei Auswahl: nur die selektierten Videos.
-  // Sonst: alle matchenden Videos der aktuellen Suche (auch ueber Seiten hinweg).
+  // NUR Videos. Wir picken EINES zufaellig aus dem Pool und mpv loopt es
+  // bis der User Esc drueckt. Erneuter Klick = neues Random-Video.
   let videos;
   if (selected.size) {
     videos = [...selected.values()].filter(r => r.type === "video");
@@ -1944,8 +1952,9 @@ $("#play-btn").addEventListener("click", async () => {
     alert("keine Videos in der Auswahl/Suche gefunden");
     return;
   }
+  const pick = videos[Math.floor(Math.random() * videos.length)];
   await fetch("/api/play", {method:"POST", headers:{"Content-Type":"application/json"},
-                            body: JSON.stringify({ids: videos.map(i=>i.id)})});
+                            body: JSON.stringify({ids: [pick.id]})});
 });
 
 // ---- LoRA Export ----
