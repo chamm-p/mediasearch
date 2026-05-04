@@ -9,7 +9,10 @@ if [ ! -x .venv/bin/python ]; then
 fi
 
 .venv/bin/python <<'PY'
-import sqlite3, glob, os
+import sqlite3, glob, os, sys
+sys.path.insert(0, ".")
+from pathlib import Path
+from common import init_db
 slots = sorted(glob.glob("data/*/mediasearch.db"))
 if not slots:
     print("Keine DB gefunden unter data/*/")
@@ -18,7 +21,19 @@ for db in slots:
     slot = os.path.dirname(db)
     rt = os.path.join(slot, "root.txt")
     root = open(rt).read().strip() if os.path.exists(rt) else "?"
+    # Migration triggern, damit alte Slots die content_hash/phash_int-Spalten kriegen
+    if root and root != "?" and Path(root).is_dir():
+        try:
+            init_db(Path(root).resolve(), force=True)
+        except Exception as e:
+            print(f"  init_db fuer {slot} fehlgeschlagen: {e}")
     c = sqlite3.connect(db)
+    cols = {r[1] for r in c.execute("PRAGMA table_info(files)").fetchall()}
+    if "content_hash" not in cols or "phash_int" not in cols:
+        print(f"\nSlot {slot} hat noch keine Hash-Spalten - skip "
+              f"(Root: {root})")
+        c.close()
+        continue
     total = c.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     chash = c.execute("SELECT COUNT(*) FROM files WHERE content_hash IS NOT NULL AND content_hash <> ''").fetchone()[0]
     phash = c.execute("SELECT COUNT(*) FROM files WHERE phash_int IS NOT NULL").fetchone()[0]
@@ -49,9 +64,9 @@ PY
 echo
 echo "--> Files ohne lesbaren Pfad (nicht hashbar):"
 .venv/bin/python <<'PY'
-import sqlite3, glob, os
+import sqlite3, glob, os, sys
+sys.path.insert(0, ".")
 from pathlib import Path
-import sys; sys.path.insert(0, ".")
 from common import decode_surrogates
 slots = sorted(glob.glob("data/*/mediasearch.db"))
 for db in slots:
@@ -60,6 +75,11 @@ for db in slots:
     root = open(rt).read().strip() if os.path.exists(rt) else ""
     if not root: continue
     c = sqlite3.connect(db)
+    cols = {r[1] for r in c.execute("PRAGMA table_info(files)").fetchall()}
+    if "content_hash" not in cols:
+        print(f"  {slot}: keine content_hash-Spalte (alte DB) - skip")
+        c.close()
+        continue
     rows = c.execute(
         "SELECT id, rel_path FROM files WHERE content_hash IS NULL OR content_hash = '' "
         "LIMIT 10"
