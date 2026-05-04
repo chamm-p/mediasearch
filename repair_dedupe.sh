@@ -17,17 +17,36 @@ echo "==============================================="
 echo " mediasearch dedupe-Repair"
 echo "==============================================="
 
-# 1) venv check
+# 1) venv check & ggf. rebuild
+need_rebuild=0
 if [ ! -d .venv ]; then
-    echo "FEHLER: .venv fehlt. Erst './run.sh ui' starten oder 'python3 -m venv .venv'"
-    exit 1
+    echo "Hinweis: .venv fehlt. Wird angelegt."
+    need_rebuild=1
+elif ! .venv/bin/pip --version >/dev/null 2>&1; then
+    echo "Hinweis: .venv ist kaputt (vermutlich von einem anderen System uebertragen,"
+    echo "  z.B. Mac-Pfade /Users/... auf Linux). Wird neu gebaut."
+    need_rebuild=1
 fi
 
-# 2) ownership check - falls .venv root gehoert, Hinweis und ggf. fixen
+if [ "$need_rebuild" = "1" ]; then
+    # alte .venv aufraeumen, ggf. mit sudo wenn root-owned
+    if [ -d .venv ]; then
+        VENV_OWNER=$(stat -c '%U' .venv 2>/dev/null || echo "?")
+        if [ "$VENV_OWNER" = "root" ] && [ "$(whoami)" != "root" ]; then
+            echo "  alte .venv gehoert root, brauche einmal sudo zum Loeschen..."
+            sudo rm -rf .venv
+        else
+            rm -rf .venv
+        fi
+    fi
+    python3 -m venv .venv
+    .venv/bin/pip install -q --upgrade pip
+fi
+
+# 2) ownership pruefen falls .venv existiert aber root-owned (frueher sudo)
 VENV_OWNER=$(stat -c '%U' .venv 2>/dev/null || echo "?")
 if [ "$VENV_OWNER" = "root" ] && [ "$(whoami)" != "root" ]; then
-    echo "Hinweis: .venv gehoert root (vermutlich frueher mit sudo angefasst)."
-    echo "Ich fixe die Ownership einmalig (benoetigt Passwort)..."
+    echo "Hinweis: .venv gehoert root - fixe Ownership (benoetigt Passwort)..."
     sudo chown -R "$USER":"$(id -gn)" .venv
     echo "  done."
     echo
