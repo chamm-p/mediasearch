@@ -721,6 +721,8 @@ async function search(opts={}) {
     render();
     updatePageBar();
     if (opts.scrollTop !== false) window.scrollTo({top: 0, behavior: "instant"});
+    // Auch beim Cache-Hit weiter Vorschau-Prefetch in die naechsten Seiten
+    setTimeout(_schedulePrefetch, 50);
     return;
   }
 
@@ -735,6 +737,37 @@ async function search(opts={}) {
   render();
   updatePageBar();
   if (opts.scrollTop !== false) window.scrollTo({top: 0, behavior: "instant"});
+  // Hintergrund-Prefetch fuer fluessiges Blaettern
+  setTimeout(_schedulePrefetch, 50);
+}
+
+async function _prefetchPage(offset) {
+  if (_pageCache.has(offset)) return;
+  const sig = _querySig();
+  if (sig !== _cacheSig) return;
+  const pageSize = parseInt($("#limit-q").value) || 200;
+  if (offset < 0) return;
+  if (totalHits > 0 && offset >= totalHits) return;
+  const params = new URLSearchParams({
+    q: $("#q").value, type: $("#type").value,
+    order: $("#order").value, limit: pageSize, offset,
+  });
+  try {
+    const r = await fetch("/api/search?" + params).then(r=>r.json());
+    // Sig kann sich waehrend des Fetch geaendert haben
+    if (_querySig() !== sig) return;
+    _cachePut(offset, r.results || [], r.total ?? 0);
+  } catch (e) { /* still ok - bei naechstem Klick Live-Fetch */ }
+}
+
+function _schedulePrefetch() {
+  const pageSize = parseInt($("#limit-q").value) || 200;
+  // 2 Seiten voraus (Default-Richtung) + 1 zurueck
+  _prefetchPage(currentOffset + pageSize);
+  _prefetchPage(currentOffset + 2 * pageSize);
+  if (currentOffset > 0) {
+    _prefetchPage(Math.max(0, currentOffset - pageSize));
+  }
 }
 
 function updatePageBar() {
