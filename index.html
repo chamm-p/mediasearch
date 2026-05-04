@@ -261,24 +261,24 @@
        border-radius: 4px 4px 0 0; }
   .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .card.highlight {
-       border-color: #ff33aa;
+       border-color: #ff0080;
        z-index: 5;
-       animation: highlight-pulse 1.2s ease-in-out infinite;
+       animation: highlight-blink 0.8s steps(2, jump-none) infinite;
   }
-  /* inset box-shadow ueberlebt overflow:hidden vom Grid: dicker
-     magenta-leuchtender Innen-Ring + zusaetzlicher Aussen-Glow */
-  @keyframes highlight-pulse {
-       0%, 100% {
+  /* deutliches Blinken: harter Wechsel zwischen Magenta und Gelb-Orange,
+     beide Phasen kraeftig leuchtend - faellt sofort ins Auge */
+  @keyframes highlight-blink {
+       0%, 49.9% {
          box-shadow:
-           inset 0 0 0 6px #ff33aa,
-           inset 0 0 24px 6px rgba(255,51,170,0.5),
-           0 0 18px 4px rgba(255,51,170,0.7);
+           inset 0 0 0 8px #ff0080,
+           inset 0 0 32px 12px rgba(255,0,128,0.85),
+           0 0 24px 6px rgba(255,0,128,0.9);
        }
-       50% {
+       50%, 100% {
          box-shadow:
-           inset 0 0 0 6px #ff66c2,
-           inset 0 0 32px 10px rgba(255,102,194,0.7),
-           0 0 30px 8px rgba(255,51,170,0.35);
+           inset 0 0 0 8px #ffd000,
+           inset 0 0 32px 12px rgba(255,208,0,0.85),
+           0 0 24px 6px rgba(255,208,0,0.9);
        }
   }
   .card.selected { border-color: #2d5; }
