@@ -18,7 +18,7 @@ from pathlib import Path
 from PIL import Image
 
 from common import (connect, decode_surrogates, extract_video_frame,
-                    init_db, video_duration)
+                    init_db, thumb_path, video_duration)
 
 
 def content_hash(path: Path) -> str:
@@ -54,9 +54,22 @@ def perceptual_hash_image(path: Path) -> int | None:
         return None
 
 
-def perceptual_hash_video(path: Path) -> int | None:
-    """pHash auf mittlerem Frame des Videos. Findet re-encoded /
-    re-komprimierte Versionen desselben Videos."""
+def perceptual_hash_video(path: Path, root: Path, file_id: int) -> int | None:
+    """pHash auf mittlerem Frame des Videos.
+    Schneller Pfad: existierendes Thumbnail (bereits Mittel-Frame) verwenden.
+    Fallback: ffmpeg neu starten und Frame extrahieren."""
+    # 1) Thumbnail existiert? Bereits Mittel-Frame des Videos -> ~300x schneller
+    tp = thumb_path(root, file_id)
+    if tp.exists():
+        try:
+            with Image.open(tp) as im:
+                im = im.convert("RGB")
+                v = _phash_pil(im)
+                if v is not None:
+                    return v
+        except Exception:
+            pass
+    # 2) Fallback: Frame frisch extrahieren
     dur = video_duration(path)
     ts = dur / 2 if dur > 0 else 1.0
     data = extract_video_frame(path, ts)
@@ -70,11 +83,13 @@ def perceptual_hash_video(path: Path) -> int | None:
         return None
 
 
-def perceptual_hash(path: Path, kind: str) -> int | None:
+def perceptual_hash(path: Path, kind: str,
+                    root: Path | None = None,
+                    file_id: int | None = None) -> int | None:
     if kind == "image":
         return perceptual_hash_image(path)
-    if kind == "video":
-        return perceptual_hash_video(path)
+    if kind == "video" and root is not None and file_id is not None:
+        return perceptual_hash_video(path, root, file_id)
     return None
 
 
@@ -139,7 +154,7 @@ def cmd_dedupe(args: argparse.Namespace) -> None:
         if existing_phash is not None:
             phash = existing_phash
         else:
-            phash = perceptual_hash(src, kind)
+            phash = perceptual_hash(src, kind, root=root, file_id=fid)
         if chash:
             pending.append((chash, phash, fid))
             done += 1
