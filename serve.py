@@ -975,12 +975,27 @@ def serve_file(file_id: int):
 def api_open(payload: dict) -> dict:
     fid = int(payload.get("id", 0))
     p, ftype = _abs_for(fid)
-    # Pro-Typ Viewer aus config.toml; leer -> xdg-open
     viewers = load_config().get("viewers", {}) or {}
     cmd_str = (viewers.get(ftype) or "").strip()
     if cmd_str:
         import shlex
-        cmd = shlex.split(cmd_str) + [str(p)]
+        cmd = shlex.split(cmd_str)
+        # Wenn der Viewer mpv ist (oder mit mpv anfaengt) und unser
+        # Rotation-Script existiert: mit reinhaengen, damit b/n auch
+        # bei einzelnem Video-Klick funktionieren.
+        if cmd and cmd[0].endswith("mpv"):
+            rotate_script = (HERE / "mpv" / "rotate.lua").resolve()
+            if rotate_script.is_file() and not any(
+                    a.startswith("--script=") for a in cmd):
+                cmd.append(f"--script={rotate_script}")
+        cmd.append(str(p))
+    elif ftype == "video":
+        # Video ohne expliziten Viewer: nimm mpv mit Fullscreen + Rotate-Script
+        cmd = ["mpv", "--fs"]
+        rotate_script = (HERE / "mpv" / "rotate.lua").resolve()
+        if rotate_script.is_file():
+            cmd.append(f"--script={rotate_script}")
+        cmd.append(str(p))
     else:
         cmd = ["xdg-open", str(p)]
     try:
