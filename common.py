@@ -220,6 +220,12 @@ def media_type(path: Path) -> str | None:
 _NUMSEG_RE = re.compile(r"(\d+)")
 
 
+def natural_key(s: str | None) -> str:
+    """Public alias - aufrufbar aus serve.py um in Python zu sortieren statt
+    via SQLite-Collation (drastisch schneller bei vielen Rows)."""
+    return _natural_key(s)
+
+
 def _natural_key(s: str | None) -> str:
     """Liefert einen Sortierschluessel, bei dem Zahlen auf Breite 10 aufgefuellt
     werden, damit '2' vor '10' kommt. Plus case-insensitive ueber casefold()."""

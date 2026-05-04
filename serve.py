@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from common import (DATA_DIR, connect, db_path, decode_surrogates, init_db,
                     load_config, load_manual_tags, load_synonyms,
-                    normalize_tags, optimize_db, thumb_path)
+                    natural_key, normalize_tags, optimize_db, thumb_path)
 
 
 def _safe(s: str | None) -> str:
@@ -803,21 +803,39 @@ def api_search_locate(file_id: int, q: str = "",
             "relevance": None,
         }
         order_clause = order_map.get(order, None)
-        if q.strip():
-            match = fts_query(q)
-            base_where = "files_fts MATCH ? AND " + " AND ".join(where)
-            sql = ("SELECT f.id "
-                   "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
-                   "WHERE " + base_where +
-                   " ORDER BY " + (order_clause or "bm25(files_fts)") +
-                   " LIMIT ?")
-            params = [match] + params + [int(max_scan)]
+        # Bei order=path: in Python sortieren statt via SQLite-Collation
+        # (massiv schneller bei vielen Files)
+        if order == "path":
+            if q.strip():
+                match = fts_query(q)
+                base_where = "files_fts MATCH ? AND " + " AND ".join(where)
+                sql = ("SELECT f.id, f.rel_path "
+                       "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
+                       "WHERE " + base_where)
+                params = [match] + params
+            else:
+                base_where = " AND ".join(where)
+                sql = "SELECT f.id, f.rel_path FROM files f WHERE " + base_where
+            rows = conn.execute(sql, params).fetchall()
+            rows.sort(key=lambda r: natural_key(r["rel_path"]))
+            if len(rows) > int(max_scan):
+                rows = rows[:int(max_scan)]
         else:
-            base_where = " AND ".join(where)
-            sql = ("SELECT f.id FROM files f WHERE " + base_where +
-                   " ORDER BY " + (order_clause or "f.id DESC") + " LIMIT ?")
-            params += [int(max_scan)]
-        rows = conn.execute(sql, params).fetchall()
+            if q.strip():
+                match = fts_query(q)
+                base_where = "files_fts MATCH ? AND " + " AND ".join(where)
+                sql = ("SELECT f.id "
+                       "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
+                       "WHERE " + base_where +
+                       " ORDER BY " + (order_clause or "bm25(files_fts)") +
+                       " LIMIT ?")
+                params = [match] + params + [int(max_scan)]
+            else:
+                base_where = " AND ".join(where)
+                sql = ("SELECT f.id FROM files f WHERE " + base_where +
+                       " ORDER BY " + (order_clause or "f.id DESC") + " LIMIT ?")
+                params += [int(max_scan)]
+            rows = conn.execute(sql, params).fetchall()
         for i, r in enumerate(rows):
             if r["id"] == file_id:
                 return {"offset": i, "total_scanned": len(rows)}
@@ -854,22 +872,41 @@ def api_search_ids(q: str = "", type: Optional[str] = None,
         }
         order_clause = order_map.get(order, None)
 
-        if q.strip():
-            match = fts_query(q)
-            base_where = "files_fts MATCH ? AND " + " AND ".join(where)
-            sql = ("SELECT f.id, f.rel_path, f.type "
-                   "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
-                   "WHERE " + base_where +
-                   " ORDER BY " + (order_clause or "bm25(files_fts)") +
-                   " LIMIT ?")
-            params = [match] + params + [max_results]
+        # Performance: bei order=path sortieren wir in Python statt via SQLite-
+        # Collation. Custom-Collation kostet pro Vergleich einen Python-Callback,
+        # bei 50k Files sind das tausende Sekunden langsamer als ein einmaliger
+        # Python-Sort der ganzen Liste.
+        if order == "path":
+            if q.strip():
+                match = fts_query(q)
+                base_where = "files_fts MATCH ? AND " + " AND ".join(where)
+                sql = ("SELECT f.id, f.rel_path, f.type "
+                       "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
+                       "WHERE " + base_where)
+                params = [match] + params
+            else:
+                base_where = " AND ".join(where)
+                sql = "SELECT f.id, f.rel_path, f.type FROM files f WHERE " + base_where
+            all_rows = conn.execute(sql, params).fetchall()
+            all_rows.sort(key=lambda r: natural_key(r["rel_path"]))
+            rows = all_rows[:max_results]
         else:
-            base_where = " AND ".join(where)
-            sql = ("SELECT f.id, f.rel_path, f.type FROM files f WHERE " + base_where +
-                   " ORDER BY " + (order_clause or "f.id DESC") +
-                   " LIMIT ?")
-            params += [max_results]
-        rows = conn.execute(sql, params).fetchall()
+            if q.strip():
+                match = fts_query(q)
+                base_where = "files_fts MATCH ? AND " + " AND ".join(where)
+                sql = ("SELECT f.id, f.rel_path, f.type "
+                       "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
+                       "WHERE " + base_where +
+                       " ORDER BY " + (order_clause or "bm25(files_fts)") +
+                       " LIMIT ?")
+                params = [match] + params + [max_results]
+            else:
+                base_where = " AND ".join(where)
+                sql = ("SELECT f.id, f.rel_path, f.type FROM files f WHERE " + base_where +
+                       " ORDER BY " + (order_clause or "f.id DESC") +
+                       " LIMIT ?")
+                params += [max_results]
+            rows = conn.execute(sql, params).fetchall()
         return {"items": [{"id": r["id"],
                            "path": _safe(r["rel_path"]),
                            "type": r["type"]} for r in rows]}
