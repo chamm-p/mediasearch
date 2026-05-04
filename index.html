@@ -1887,6 +1887,20 @@ let _highlightSafetyTimer = null;
 let _highlightArmedAt = 0;
 function _dismissHighlight(e) {
   if (e && (Date.now() - _highlightArmedAt) < 400) return;
+  // Konservatives Dismiss-Kriterium: Highlight ueberlebt Toolbar-Aktionen
+  // (Suche, Filter, Sortierung, Buttons), Pfeiltasten und Drawer-Interaktionen.
+  // Nur explizite Wegwerf-Trigger:
+  //   - Esc-Taste
+  //   - Klick AUF eine Karte (User wendet sich anderem Bild zu)
+  if (e) {
+    if (e.type === "keydown") {
+      if (e.key !== "Escape") return;
+    } else if (e.type === "mousedown") {
+      if (!e.target || !e.target.closest(".card")) return;
+    } else {
+      return;
+    }
+  }
   _highlightedId = null;
   document.querySelectorAll(".card.highlight").forEach(c =>
     c.classList.remove("highlight"));
@@ -1902,7 +1916,7 @@ function _armHighlightDismiss() {
   document.addEventListener("mousedown", _dismissHighlight, true);
   document.addEventListener("keydown",   _dismissHighlight, true);
   clearTimeout(_highlightSafetyTimer);
-  _highlightSafetyTimer = setTimeout(() => _dismissHighlight(null), 120000);
+  _highlightSafetyTimer = setTimeout(() => _dismissHighlight(null), 300000);
 }
 
 function scrollToCard(id) {
