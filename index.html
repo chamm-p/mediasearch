@@ -731,8 +731,11 @@ async function search(opts={}) {
     render();
     updatePageBar();
     if (opts.scrollTop !== false) window.scrollTo({top: 0, behavior: "instant"});
-    // Auch beim Cache-Hit weiter Vorschau-Prefetch in die naechsten Seiten
     setTimeout(_schedulePrefetch, 50);
+    if (!opts._noAutoLocate && _highlightedId != null
+        && !results.some(r => r.id === _highlightedId)) {
+      _autoLocateHighlighted();
+    }
     return;
   }
 
@@ -749,6 +752,44 @@ async function search(opts={}) {
   if (opts.scrollTop !== false) window.scrollTo({top: 0, behavior: "instant"});
   // Hintergrund-Prefetch fuer fluessiges Blaettern
   setTimeout(_schedulePrefetch, 50);
+  // Wenn ein Highlight aktiv ist, aber das Bild nicht in den aktuellen
+  // Treffern auftaucht, automatisch zur richtigen Seite springen.
+  // Damit "haelt" das Bild wenn man die Suche erweitert/aendert.
+  if (!opts._noAutoLocate && _highlightedId != null
+      && !results.some(r => r.id === _highlightedId)) {
+    _autoLocateHighlighted();
+  }
+}
+
+async function _autoLocateHighlighted() {
+  const id = _highlightedId;
+  if (id == null) return;
+  if ($("#order").value === "random") return;
+  const params = new URLSearchParams({
+    file_id: String(id),
+    q:    $("#q").value,
+    type: $("#type").value,
+    order: $("#order").value,
+  });
+  try {
+    const resp = await fetch("/api/search/locate?" + params);
+    if (!resp.ok) return;
+    const j = await resp.json();
+    if (j.offset < 0) {
+      console.log("[autoLocate] Bild nicht im neuen Treffer-Set");
+      return;
+    }
+    const pageSize = parseInt($("#limit-q").value) || 200;
+    const targetOffset = Math.floor(j.offset / pageSize) * pageSize;
+    if (targetOffset === currentOffset) return;
+    console.log("[autoLocate] springe zu offset", targetOffset);
+    // _noAutoLocate verhindert rekursiven Aufruf
+    await search({offset: targetOffset, reset: false, scrollTop: false,
+                  _noAutoLocate: true});
+    requestAnimationFrame(() => scrollToCard(id));
+  } catch (e) {
+    console.warn("[autoLocate] fehlgeschlagen:", e);
+  }
 }
 
 async function _prefetchPage(offset) {
