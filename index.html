@@ -114,6 +114,12 @@
        font-size: 0.85rem; user-select: none; }
   #mtags .chip:hover { background: #2c2c2c; border-color: #888; }
   #mtags .chip.remove-mode { background: #6a2a2a; border-color: #b33; }
+  /* Tag ist auf ALLEN selektierten Files gesetzt */
+  #mtags .chip.active { background: #f8a; color: #000; border-color: #f8a;
+       font-weight: 600; }
+  /* Tag ist auf manchen aber nicht allen selektierten Files gesetzt */
+  #mtags .chip.partial { background: #5a3a4a; color: #f8a; border-color: #f8a;
+       border-style: dashed; }
   #mtags .info { color: #888; font-size: 0.85rem; margin-left: 12px; }
 
   /* Setup panel */
@@ -961,11 +967,14 @@ function render() {
     card.addEventListener("mouseenter", () => showCardPop(card, it));
     card.addEventListener("mouseleave", hideCardPop);
     card.addEventListener("click", (e) => {
-      if (e.shiftKey || e.ctrlKey || e.metaKey) { toggleSel(it, card); return; }
+      // Shift+Klick (mit oder ohne Ctrl) -> Range-Selection vom letzten Anker
+      if (e.shiftKey) { selectRangeTo(it); return; }
+      // Ctrl/Meta+Klick -> einzeln togglen, neuer Anker
+      if (e.ctrlKey || e.metaKey) { toggleSel(it, card); return; }
+      // normaler Klick -> oeffnen
       if (it.type === "image") {
         startSlideshowAt(it);
       } else {
-        // Videos: weiterhin im Standard-Viewer oeffnen
         fetch("/api/open", {method:"POST", headers:{"Content-Type":"application/json"},
                             body: JSON.stringify({id: it.id})});
       }
@@ -975,11 +984,44 @@ function render() {
   }
   updateActionState();
 }
+let _rangeAnchorId = null;   // letzter aktiv selektierter -> Anker fuer Shift+Klick
+
 function toggleSel(item, card) {
-  if (selected.has(item.id)) { selected.delete(item.id); card.classList.remove("selected"); }
-  else { selected.set(item.id, item); card.classList.add("selected"); }
+  if (selected.has(item.id)) {
+    selected.delete(item.id);
+    card.classList.remove("selected");
+    if (_rangeAnchorId === item.id) _rangeAnchorId = null;
+  } else {
+    selected.set(item.id, item);
+    card.classList.add("selected");
+    _rangeAnchorId = item.id;
+  }
   updateActionState();
   updatePageBar();
+  updateChipStates();
+}
+
+function selectRangeTo(item) {
+  // Selektiert alle Karten zwischen _rangeAnchorId und item.id (in `results`)
+  if (_rangeAnchorId == null) {
+    return toggleSel(item, document.querySelector(`.card[data-id="${item.id}"]`));
+  }
+  const fromIdx = results.findIndex(r => r.id === _rangeAnchorId);
+  const toIdx   = results.findIndex(r => r.id === item.id);
+  if (fromIdx < 0 || toIdx < 0) {
+    // Anker oder Ziel nicht auf aktueller Seite -> nur den Klickenden toggeln
+    return toggleSel(item, document.querySelector(`.card[data-id="${item.id}"]`));
+  }
+  const [a, b] = [Math.min(fromIdx, toIdx), Math.max(fromIdx, toIdx)];
+  for (let i = a; i <= b; i++) {
+    const r = results[i];
+    if (!selected.has(r.id)) selected.set(r.id, r);
+  }
+  _rangeAnchorId = item.id;
+  render();
+  updateActionState();
+  updatePageBar();
+  updateChipStates();
 }
 function updateActionState() {
   const items = selected.size ? [...selected.values()] : results;
@@ -1027,9 +1069,30 @@ async function loadManualTags() {
       wrap.appendChild(g);
     }
     mtagsLoaded = Object.keys(groups).length > 0;
+    updateChipStates();
   } catch (e) {
     console.error("manual tags laden fehlgeschlagen", e);
   }
+}
+
+function updateChipStates() {
+  const ids = [...selected.values()];
+  const chips = document.querySelectorAll("#mtags .chip");
+  if (!ids.length) {
+    chips.forEach(c => { c.classList.remove("active", "partial"); });
+    return;
+  }
+  chips.forEach(chip => {
+    const tag = chip.textContent;
+    let count = 0;
+    for (const it of ids) {
+      if ((it.manual_tags || []).includes(tag)) count++;
+    }
+    const all  = (count === ids.length);
+    const some = (count > 0 && count < ids.length);
+    chip.classList.toggle("active",  all);
+    chip.classList.toggle("partial", some);
+  });
 }
 
 async function applyManualTag(tag, action, chip) {
@@ -1061,6 +1124,7 @@ async function applyManualTag(tag, action, chip) {
       it.manual_tags = cur;
     }
     render();
+    updateChipStates();
   } finally {
     if (chip) chip.style.opacity = "";
   }
@@ -1110,10 +1174,12 @@ function loadUiState() {
 }
 $("#select-all").addEventListener("click", () => {
   for (const r of results) selected.set(r.id, r);
-  render(); updatePageBar();
+  render(); updatePageBar(); updateChipStates();
 });
 $("#clear-sel").addEventListener("click", () => {
-  selected.clear(); render(); updatePageBar();
+  selected.clear();
+  _rangeAnchorId = null;
+  render(); updatePageBar(); updateChipStates();
 });
 
 // ---- Setup panel ----
