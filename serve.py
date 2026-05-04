@@ -1257,11 +1257,14 @@ def api_play(payload: dict) -> dict:
     if not paths: raise HTTPException(404, "none of the ids resolved")
     # Eines = endlos loopen bis Esc; mehrere = playlist mit shuffle+loop
     # --fs = fullscreen sofort beim Start
-    # --input-conf = unsere custom Hotkeys (z.B. r/R fuer Rotation)
+    # --input-conf = unsere custom Hotkeys (z.B. b/n fuer Rotation)
     mpv_extra: list[str] = ["--fs"]
-    custom_input = HERE / "mpv" / "input.conf"
-    if custom_input.exists():
+    custom_input = (HERE / "mpv" / "input.conf").resolve()
+    if custom_input.is_file():
         mpv_extra.append(f"--input-conf={custom_input}")
+        logger.info("mpv input-conf: %s", custom_input)
+    else:
+        logger.warning("mpv input-conf NICHT gefunden: %s", custom_input)
     if len(paths) == 1:
         cmd = ["mpv", *mpv_extra, "--loop-file=inf", paths[0]]
     else:
