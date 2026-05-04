@@ -130,8 +130,16 @@ def cmd_dedupe(args: argparse.Namespace) -> None:
         if not src.exists():
             skipped += 1
             continue
-        chash = content_hash(src)
-        phash = perceptual_hash(src, kind)
+        # Bestehende Werte uebernehmen, nur fehlende neu berechnen.
+        # Spart bei Videos das erneute Lesen der ganzen Datei wenn nur
+        # phash_int gefehlt hat (z.B. nach Migration auf Video-pHash).
+        existing_chash = (r["content_hash"] or "") if not args.all else ""
+        existing_phash = r["phash_int"]      if not args.all else None
+        chash = existing_chash if existing_chash else content_hash(src)
+        if existing_phash is not None:
+            phash = existing_phash
+        else:
+            phash = perceptual_hash(src, kind)
         if chash:
             pending.append((chash, phash, fid))
             done += 1
