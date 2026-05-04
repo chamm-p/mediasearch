@@ -395,11 +395,7 @@
     <button id="page-next" title="naechste Seite (Pfeil-rechts)">&raquo;</button>
   </div>
   <div class="center">
-    <span class="q-wrap" id="q-wrap">
-      <input id="q" type="text" placeholder='Suche (z.B. "sunset beach", katze, NOT outdoor)' autofocus>
-      <button class="q-clear" id="q-clear" type="button" title="Suche leeren (Esc)">&times;</button>
-    </span>
-    <select id="type">
+    <select id="type" title="Medientyp filtern">
       <option value="">Alle</option>
       <option value="image">Bilder</option>
       <option value="video">Videos</option>
@@ -409,8 +405,13 @@
       <option value="newest">Neueste zuerst</option>
       <option value="oldest">Aelteste zuerst</option>
       <option value="path" selected>Pfad / Name</option>
+      <option value="size_desc">Groesse (gross zuerst)</option>
       <option value="random">Random</option>
     </select>
+    <span class="q-wrap" id="q-wrap">
+      <input id="q" type="text" placeholder='Suche (z.B. "sunset beach", katze, NOT outdoor)' autofocus>
+      <button class="q-clear" id="q-clear" type="button" title="Suche leeren (Esc)">&times;</button>
+    </span>
     <button id="search-btn">Suchen</button>
   </div>
   <div class="right">
