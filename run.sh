@@ -78,7 +78,16 @@ cmd_ui() {
     echo "  Logs:  ${HERE}/mediasearch.log"
     echo "==============================================="
 
-    # Browser-Opener in Subshell: wartet bis Port antwortet, dann Browser auf
+    # Schon eine Instanz auf dem Port? Dann nur Browser oeffnen, keine zweite
+    # serve.py starten (Tagger laeuft ggf. dort weiter).
+    if curl -sf -m 1 "${url}/api/stats" >/dev/null 2>&1; then
+        echo "serve.py laeuft bereits auf ${url} - oeffne nur den Browser."
+        echo "(Falls du wirklich neu starten willst: 'pkill -f serve.py' und nochmal)"
+        launch_browser "$url"
+        exit 0
+    fi
+
+    # Sonst: starten und Browser nach kurzer Wartezeit aufmachen
     (
         for _ in $(seq 1 60); do
             if curl -sf -m 1 "${url}/api/stats" >/dev/null 2>&1; then
@@ -90,7 +99,6 @@ cmd_ui() {
         echo "Browser-Opener: Port hat in 30s nicht geantwortet, oeffne nicht."
     ) &
 
-    # serve.py im Vordergrund - Python-Output und uvicorn-Logs direkt sichtbar
     echo "starte serve.py (Strg+C zum Beenden)"
     echo
     exec python serve.py "$@"
