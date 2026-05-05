@@ -54,9 +54,16 @@ launch_browser() {
     echo "Browser: $browser"
     case "$browser" in
         */firefox)
-            # eigenes Profil unter browser/profile/ -> portable
             mkdir -p "$HERE/browser/profile"
             "$browser" --profile "$HERE/browser/profile" --new-window "$url" \
+                >/dev/null 2>&1 &
+            ;;
+        *Chromium*.AppImage|*chromium*.AppImage|*chrome*.AppImage|*Chrome*.AppImage)
+            # Chromium-Engine: portables User-Data-Dir unter browser/chromium-data/
+            # --no-sandbox als Fallback fuer Systeme ohne user namespaces
+            mkdir -p "$HERE/browser/chromium-data"
+            "$browser" --user-data-dir="$HERE/browser/chromium-data" \
+                --no-sandbox --new-window "$url" \
                 >/dev/null 2>&1 &
             ;;
         *xdg-open)

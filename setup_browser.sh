@@ -35,33 +35,47 @@ if [ "$mode" = "firefox" ]; then
     exit 0
 fi
 
-# Chromium-Variante - AppImage von ungoogled-chromium-binaries
-# Wir laden die "latest"-Liste und picken die neueste Linux-x64-AppImage.
-APPIMAGE_PATTERN="ungoogled-chromium*x86_64.AppImage"
+# Chromium-Variante - AppImage von ivan-hc/Chromium-Web-Browser-appimage
+# Dort liegen taegliche Builds aller Channels (stable/beta/candidate/edge).
+# Wir nehmen "stable".
+APPIMAGE_PATTERN="Chromium-*-x86_64.AppImage"
 if compgen -G "$DEST/$APPIMAGE_PATTERN" >/dev/null; then
     echo "Chromium-AppImage bereits vorhanden:"
     ls -la "$DEST/"$APPIMAGE_PATTERN
     exit 0
 fi
 
-# Versuche, die latest-URL aus dem Releases-API zu holen
-echo "suche aktuellste ungoogled-chromium AppImage ..."
-LATEST_URL=$(curl -fsSL "https://api.github.com/repos/ungoogled-software/ungoogled-chromium-binaries/releases/latest" \
-    | grep -oE 'https://[^"]+x86_64\.AppImage' | head -1 || true)
+REPO="ivan-hc/Chromium-Web-Browser-appimage"
+CHANNEL="${CHROMIUM_CHANNEL:-stable}"   # stable / candidate / beta / edge
 
-if [ -z "$LATEST_URL" ]; then
+echo "suche aktuellste Chromium-${CHANNEL} AppImage ..."
+# Die neueste Release-Tag mit Assets finden (continuous-Tag hat keine Assets)
+URL=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=10" \
+      | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+"' \
+      | grep -oE 'https://[^"]+' \
+      | grep -E "Chromium-${CHANNEL}-[^/]*-x86_64\.AppImage$" \
+      | head -1 || true)
+
+if [ -z "$URL" ]; then
     echo "Konnte AppImage-URL nicht automatisch ermitteln."
-    echo "Bitte manuell von einer der Quellen herunterladen und nach '$DEST/' ablegen:"
-    echo "  - https://ungoogled-software.github.io/ungoogled-chromium-binaries/"
-    echo "  - https://github.com/ungoogled-software/ungoogled-chromium-binaries/releases"
-    echo "  - https://chromium.appimage.io/ (alternative Build)"
+    echo "Manuelle Quellen:"
+    echo "  - https://github.com/${REPO}/releases"
+    echo "  - https://www.chromium.org/getting-involved/download-chromium/"
+    echo "Datei nach '$DEST/' ablegen, run.sh erkennt sie."
     exit 1
 fi
 
-echo "lade $LATEST_URL ..."
-fname="$(basename "$LATEST_URL")"
-curl -L --progress-bar -o "$fname" "$LATEST_URL"
+fname="$(basename "$URL")"
+echo "lade $URL"
+curl -L --progress-bar -o "$fname" "$URL"
 chmod +x "$fname"
+
+# Sandbox-Hinweis: AppImage-Chromium braucht entweder --no-sandbox oder
+# user-namespaces. Wenn das System sie blockt, hilft --no-sandbox.
 echo
 echo "fertig: $DEST/$fname"
 echo "run.sh erkennt jede *.AppImage in $DEST/ automatisch."
+echo
+echo "Hinweis: falls beim Start ein Sandbox-Fehler kommt, kann der AppImage"
+echo "mit '--no-sandbox' gestartet werden. run.sh tut das automatisch fuer"
+echo "Chromium-AppImages."
