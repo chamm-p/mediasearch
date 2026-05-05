@@ -1771,20 +1771,36 @@ function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
 }
 
 function _expandPlaylist(full) {
-  // Was wird gerade angezeigt? - merken, dann Liste austauschen, Index suchen
   const cur = slideOrder[slideIdx];
+  if (!cur) {
+    // Initial-Liste war leer (z.B. Klick aus Auswahl die nur Videos hatte) -
+    // einfach komplett uebernehmen
+    slidePlaylist = full;
+    slideOrder = full.slice();
+    slideIdx = 0;
+    showSlide();
+    return;
+  }
+  // Position des aktuell gezeigten Bildes in der neuen Vollliste suchen
+  const idxInFull = full.findIndex(r => r.id === cur.id);
+  if (idxInFull < 0) {
+    // cur ist nicht in der neuen Liste enthalten - z.B. weil max_results
+    // gecappt hat, oder weil das Bild zwischenzeitlich aus der Suche
+    // gefallen ist. Wir aendern NICHTS an der aktuellen Anzeige.
+    console.warn("[expandPlaylist] aktuelles Bild nicht in Vollliste - keine Expansion");
+    return;
+  }
   slidePlaylist = full;
-  if (slideMode === "random" && cur) {
-    // anker behalten, rest shuffle
-    const rest = slidePlaylist.filter(r => r.id !== cur.id);
+  if (slideMode === "random") {
+    // Anker behalten, Rest shufflen
+    const rest = full.filter(r => r.id !== cur.id);
     slideOrder = [cur, ...shuffled(rest)];
     slideIdx = 0;
   } else {
-    slideOrder = slidePlaylist.slice();
-    slideIdx = cur ? slideOrder.findIndex(r => r.id === cur.id) : 0;
-    if (slideIdx < 0) slideIdx = 0;
+    slideOrder = full.slice();
+    slideIdx = idxInFull;
   }
-  // Info-Zeile aktualisieren - showSlide laedt aber kein neues Bild
+  // showSlide updatet Info-Zeile + Pfad/Name; src bleibt gleich (kein Reload)
   showSlide();
 }
 
