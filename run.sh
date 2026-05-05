@@ -144,8 +144,11 @@ Commands:
                     --only image|video      nur ein Typ
                   Anschliessend im UI: Setup -> 'Doubletten' anklicken
 
-  setup-browser   Laedt portable Firefox nach browser/ (Linux x86_64, ~80 MB)
-                  Sprache via env: LANG_TAG=de (default) / en / fr / ...
+  setup-browser   Laedt einen portablen Browser nach browser/
+                    (kein Argument)  -> Firefox-Tarball (~80 MB, GTK)
+                    --chromium       -> ungoogled-chromium AppImage (~200 MB,
+                                        oft fluessiger auf X11)
+                  Sprache fuer Firefox via env: LANG_TAG=de (default) / en / ...
 
   help            diese Uebersicht
 
@@ -167,7 +170,7 @@ case "${1:-ui}" in
     tag)            shift; exec python tag.py    "$@" ;;
     thumbs)         shift; exec python thumbs.py "$@" ;;
     dedupe)         shift; exec python dedupe.py "$@" ;;
-    setup-browser)  exec bash "$HERE/setup_browser.sh" ;;
+    setup-browser)  shift; exec bash "$HERE/setup_browser.sh" "$@" ;;
     help|-h|--help) show_help ;;
     *)  echo "Unbekanntes Command: ${1}"
         echo
