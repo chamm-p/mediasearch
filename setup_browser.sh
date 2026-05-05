@@ -19,19 +19,47 @@ if [ "${1:-}" = "--chromium" ]; then mode="chromium"; fi
 cd "$DEST"
 
 if [ "$mode" = "firefox" ]; then
-    if [ -x "firefox/firefox" ]; then
+    if [ ! -x "firefox/firefox" ]; then
+        URL="https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=${LANG_TAG}"
+        echo "lade Firefox-Tarball nach $DEST ..."
+        curl -L --progress-bar -o firefox.tar.xz "$URL"
+        echo "entpacke ..."
+        tar xf firefox.tar.xz
+        rm firefox.tar.xz
+    else
         echo "Firefox bereits installiert: $DEST/firefox/firefox"
-        exit 0
     fi
-    URL="https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=${LANG_TAG}"
-    echo "lade Firefox-Tarball nach $DEST ..."
-    curl -L --progress-bar -o firefox.tar.xz "$URL"
-    echo "entpacke ..."
-    tar xf firefox.tar.xz
-    rm firefox.tar.xz
+
+    # Profil-Verzeichnis + user.js mit Performance-Tweaks anlegen
+    # (WebRender / Hardware-Compositor an -> druckt Xorg-CPU spuerbar)
+    mkdir -p "$DEST/profile"
+    cat > "$DEST/profile/user.js" <<'PREFS'
+// mediasearch Firefox-Tweaks fuer Xorg-Performance.
+// Wird bei jedem Start gelesen und ueberschreibt prefs.js.
+
+// WebRender (GPU-Compositor) hart einschalten - kein Software-Rasterizing
+user_pref("gfx.webrender.all", true);
+user_pref("gfx.webrender.compositor", true);
+user_pref("gfx.webrender.compositor.force-enabled", true);
+
+// Hardware-Beschleunigung
+user_pref("layers.acceleration.force-enabled", true);
+user_pref("media.hardware-video-decoding.force-enabled", true);
+
+// EGL statt GLX auf X11 - oft fluessiger
+user_pref("gfx.x11-egl.force-enabled", true);
+
+// Animation-Reduktion (kein App-spezifischer Effekt, aber System-leichter)
+user_pref("ui.prefersReducedMotion", 0);   // 0 = Animationen erlauben
+
+// First-run / Start ohne Stoerung
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("datareporting.policy.firstRunURL", "");
+PREFS
     echo
     echo "fertig: $DEST/firefox/firefox"
-    echo "Profil portable unter: $DEST/profile/"
+    echo "Profil portable + WebRender aktiviert: $DEST/profile/"
     exit 0
 fi
 
