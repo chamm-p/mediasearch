@@ -1951,6 +1951,30 @@ function showSlide() {
   $("#slide-pathname").textContent = it.path || "";
   if (slideTextOn) updateSlideText();
   updateSlideMTagState();
+  // Asynchroner Prefetch: naechstes (+1, +2) und vorheriges (-1) Bild
+  // im Browser-Cache laden, damit Forward/Backward schneller sind.
+  // Bei R (Random-Toggle) wird die Liste neu gemischt; der Prefetch ist dann
+  // fuer das alte +1 sinnlos, schadet aber nicht.
+  prefetchSlideNeighbors();
+}
+
+const _prefetchedSlides = new Set();
+function prefetchSlideNeighbors() {
+  if (slideOrder.length < 2) return;
+  const offsets = [1, 2, -1];
+  for (const off of offsets) {
+    const i = (slideIdx + off + slideOrder.length) % slideOrder.length;
+    const it = slideOrder[i];
+    if (!it || _prefetchedSlides.has(it.id)) continue;
+    _prefetchedSlides.add(it.id);
+    const img = new Image();
+    img.src = "/file/" + it.id;
+    // beschraenken damit Set nicht unbegrenzt waechst
+    if (_prefetchedSlides.size > 200) {
+      const first = _prefetchedSlides.values().next().value;
+      _prefetchedSlides.delete(first);
+    }
+  }
 }
 function scheduleNext() {
   clearTimeout(slideTimer);
