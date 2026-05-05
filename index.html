@@ -261,25 +261,16 @@
        border-radius: 4px 4px 0 0; }
   .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .card.highlight {
-       border-color: #ff0080;
        z-index: 5;
-       animation: highlight-blink 0.8s steps(2, jump-none) infinite;
+       animation: highlight-blink 1s steps(2, jump-none) infinite;
+       /* Hint an Browser: nur Box-shadow animiert, kein Layout-Reflow */
+       will-change: box-shadow;
   }
-  /* deutliches Blinken: harter Wechsel zwischen Magenta und Gelb-Orange,
-     beide Phasen kraeftig leuchtend - faellt sofort ins Auge */
+  /* Deutliches Blinken via INSET-Ring (keine Outer-Shadows, kein Glow ausserhalb).
+     Repaint bleibt auf die Kartenflaeche begrenzt -> sehr CPU-arm. */
   @keyframes highlight-blink {
-       0%, 49.9% {
-         box-shadow:
-           inset 0 0 0 8px #ff0080,
-           inset 0 0 32px 12px rgba(255,0,128,0.85),
-           0 0 24px 6px rgba(255,0,128,0.9);
-       }
-       50%, 100% {
-         box-shadow:
-           inset 0 0 0 8px #ffd000,
-           inset 0 0 32px 12px rgba(255,208,0,0.85),
-           0 0 24px 6px rgba(255,208,0,0.9);
-       }
+       0%, 49.9% { box-shadow: inset 0 0 0 8px #ff0080; }
+       50%, 100% { box-shadow: inset 0 0 0 8px #ffd000; }
   }
   .card.selected { border-color: #2d5; }
   /* alte aspect-ratio-Regel ueberschrieben oben */
@@ -829,9 +820,9 @@ async function _prefetchPage(offset) {
 
 function _schedulePrefetch() {
   const pageSize = parseInt($("#limit-q").value) || 200;
-  // 2 Seiten voraus (Default-Richtung) + 1 zurueck
+  // Nur eine Seite voraus (haupt-Richtung) und eine zurueck.
+  // Mehr Aggression hat das System unnoetig belastet.
   _prefetchPage(currentOffset + pageSize);
-  _prefetchPage(currentOffset + 2 * pageSize);
   if (currentOffset > 0) {
     _prefetchPage(Math.max(0, currentOffset - pageSize));
   }
@@ -1977,19 +1968,17 @@ function showSlide() {
 const _prefetchedSlides = new Set();
 function prefetchSlideNeighbors() {
   if (slideOrder.length < 2) return;
-  const offsets = [1, 2, -1];
-  for (const off of offsets) {
-    const i = (slideIdx + off + slideOrder.length) % slideOrder.length;
-    const it = slideOrder[i];
-    if (!it || _prefetchedSlides.has(it.id)) continue;
-    _prefetchedSlides.add(it.id);
-    const img = new Image();
-    img.src = "/file/" + it.id;
-    // beschraenken damit Set nicht unbegrenzt waechst
-    if (_prefetchedSlides.size > 200) {
-      const first = _prefetchedSlides.values().next().value;
-      _prefetchedSlides.delete(first);
-    }
+  // nur das naechste Bild vorhalten - reicht fuer fluessiges Forward-Blaettern
+  // und haelt CPU/Disk-I/O moderat
+  const i = (slideIdx + 1) % slideOrder.length;
+  const it = slideOrder[i];
+  if (!it || _prefetchedSlides.has(it.id)) return;
+  _prefetchedSlides.add(it.id);
+  const img = new Image();
+  img.src = "/file/" + it.id;
+  if (_prefetchedSlides.size > 100) {
+    const first = _prefetchedSlides.values().next().value;
+    _prefetchedSlides.delete(first);
   }
 }
 function scheduleNext() {
