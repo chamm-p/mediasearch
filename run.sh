@@ -61,10 +61,15 @@ launch_browser() {
         *Chromium*.AppImage|*chromium*.AppImage|*chrome*.AppImage|*Chrome*.AppImage)
             # Chromium-Engine: portables User-Data-Dir unter browser/chromium-data/
             # --no-sandbox als Fallback fuer Systeme ohne user namespaces
+            # --appimage-extract-and-run umgeht fehlendes fuse2 (haeufig auf
+            # neuen Distros - sonst startet die AppImage stumm und nichts kommt)
+            # stdout/stderr nach browser/chromium.log fuer Debug
             mkdir -p "$HERE/browser/chromium-data"
-            "$browser" --user-data-dir="$HERE/browser/chromium-data" \
+            "$browser" --appimage-extract-and-run \
+                --user-data-dir="$HERE/browser/chromium-data" \
                 --no-sandbox --new-window "$url" \
-                >/dev/null 2>&1 &
+                > "$HERE/browser/chromium.log" 2>&1 &
+            echo "  Chromium-Logs: $HERE/browser/chromium.log"
             ;;
         *xdg-open)
             xdg-open "$url" >/dev/null 2>&1 &
