@@ -37,6 +37,7 @@ from common import (
     connect,
     decode_surrogates,
     encode_surrogates,
+    fill_sort_keys,
     find_context,
     image_to_jpeg_bytes,
     init_db,
@@ -46,6 +47,7 @@ from common import (
     load_synonyms,
     make_thumb,
     media_type,
+    natural_key,
     normalize_tags,
     thumb_path,
     video_frames_for_tagging,
@@ -422,10 +424,12 @@ def discover(root: Path) -> tuple[int, int, int, int, int]:
               f"unchanged={len(seen_ids)}", flush=True)
 
         if inserts:
+            # sort_key sofort mitschreiben - vermeidet spaeteren Reindex-Lauf
             conn.executemany(
-                "INSERT INTO files(rel_path, type, size, mtime, seen_at, status) "
-                "VALUES(?, ?, ?, ?, ?, 'pending')",
-                inserts,
+                "INSERT INTO files(rel_path, type, size, mtime, seen_at, status, sort_key) "
+                "VALUES(?, ?, ?, ?, ?, 'pending', ?)",
+                [(rel, kind, sz, mt, now, natural_key(rel))
+                 for rel, kind, sz, mt, _ in inserts],
             )
         if changed_rows:
             conn.executemany(
@@ -434,9 +438,11 @@ def discover(root: Path) -> tuple[int, int, int, int, int]:
                 [(s, m, now, fid) for fid, s, m in changed_rows],
             )
         if moves:
+            # bei Pfad-Wechsel auch sort_key neu setzen
             conn.executemany(
-                "UPDATE files SET rel_path=?, seen_at=? WHERE id=?",
-                [(new_rel, now_, fid) for new_rel, now_, fid, _ in moves],
+                "UPDATE files SET rel_path=?, sort_key=?, seen_at=? WHERE id=?",
+                [(new_rel, natural_key(new_rel), now_, fid)
+                 for new_rel, now_, fid, _ in moves],
             )
         if orphans:
             # Thumbnails vor DB-DELETE wegraeumen

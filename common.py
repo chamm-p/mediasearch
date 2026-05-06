@@ -258,29 +258,49 @@ def connect(root: Path) -> sqlite3.Connection:
     return conn
 
 
+def fill_sort_keys(conn: sqlite3.Connection, force: bool = False) -> int:
+    """Berechnet sort_key (natural_key fuer rel_path) fuer alle Files,
+    denen er fehlt (oder alle mit force=True). Gibt Anzahl aktualisierter Rows."""
+    if force:
+        rows = conn.execute("SELECT id, rel_path FROM files").fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, rel_path FROM files "
+            "WHERE sort_key IS NULL OR sort_key = ''"
+        ).fetchall()
+    if not rows:
+        return 0
+    updates = [(natural_key(r["rel_path"] or ""), r["id"]) for r in rows]
+    conn.executemany("UPDATE files SET sort_key=? WHERE id=?", updates)
+    conn.commit()
+    return len(updates)
+
+
 def optimize_db(root: Path) -> dict:
-    """Wartung: WAL-Checkpoint, ANALYZE (Query-Planner-Stats),
-    optional VACUUM (Defrag). Gibt Vorher/Nachher-Groessen zurueck."""
+    """Wartung: WAL-Checkpoint, ANALYZE, FTS-optimize, sort_key fuellen,
+    VACUUM. Gibt Vorher/Nachher-Groessen + reindex count zurueck."""
     p = db_path(root)
     before = p.stat().st_size if p.exists() else 0
     conn = connect(root)
+    reindexed = 0
     try:
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        # sort_key fuellen falls fehlend
+        reindexed = fill_sort_keys(conn, force=False)
         conn.execute("ANALYZE")
-        # FTS5 hat einen optimize-Befehl der die Index-Segmente komprimiert
         try:
             conn.execute("INSERT INTO files_fts(files_fts) VALUES('optimize')")
         except Exception:
             pass
         conn.commit()
-        # VACUUM muss ausserhalb einer Transaction laufen
         conn.isolation_level = None
         conn.execute("VACUUM")
     finally:
         conn.close()
     after = p.stat().st_size if p.exists() else 0
     return {"size_before": before, "size_after": after,
-            "saved": max(0, before - after)}
+            "saved": max(0, before - after),
+            "sort_keys_filled": reindexed}
 
 
 SCHEMA = """
@@ -299,7 +319,8 @@ CREATE TABLE IF NOT EXISTS files (
     seen_at      REAL DEFAULT 0,
     started_at   REAL DEFAULT 0,
     content_hash TEXT DEFAULT '',
-    phash_int    INTEGER
+    phash_int    INTEGER,
+    sort_key     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
 CREATE INDEX IF NOT EXISTS idx_files_type ON files(type);
@@ -347,9 +368,32 @@ def init_db(root: Path, force: bool = False) -> None:
             conn.execute("ALTER TABLE files ADD COLUMN content_hash TEXT DEFAULT ''")
         if "phash_int" not in cols:
             conn.execute("ALTER TABLE files ADD COLUMN phash_int INTEGER")
+        if "sort_key" not in cols:
+            conn.execute("ALTER TABLE files ADD COLUMN sort_key TEXT")
         try:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_chash ON files(content_hash)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_phash ON files(phash_int)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_sortkey ON files(sort_key)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_mtime ON files(mtime)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_size ON files(size)")
+        except Exception:
+            pass
+        # Einmal-Befuellung von sort_key fuer existierende Rows (laeuft nur
+        # bei Files die noch keinen haben, also einmalig nach dem ersten
+        # Init mit der neuen Schema-Version).
+        try:
+            n_null = conn.execute(
+                "SELECT COUNT(*) FROM files WHERE sort_key IS NULL OR sort_key = ''"
+            ).fetchone()[0]
+            if n_null > 0:
+                rows = conn.execute("SELECT id, rel_path FROM files "
+                                    "WHERE sort_key IS NULL OR sort_key = ''"
+                                    ).fetchall()
+                conn.executemany(
+                    "UPDATE files SET sort_key=? WHERE id=?",
+                    [(natural_key(r[1] or ""), r[0]) for r in rows],
+                )
+                conn.commit()
         except Exception:
             pass
         # Migration auf manual_tags + neues FTS-Schema

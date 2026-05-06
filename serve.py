@@ -634,17 +634,20 @@ def _get_sorted_ids(conn, q: str, type_filter: str | None,
     if type_filter:
         where.append("f.type=?"); params.append(type_filter)
     if order == "path":
+        # sort_key ist vorberechnet + indexiert -> SQL-Order ist viel schneller
+        # als Python-Sort. Falls sort_key NULL (Migration nicht durch),
+        # fallback auf rel_path COLLATE NOCASE.
         if q.strip():
             match = fts_query(q)
             base = "files_fts MATCH ? AND " + " AND ".join(where)
-            sql = ("SELECT f.id, f.rel_path FROM files f "
-                   "JOIN files_fts ON files_fts.rowid=f.id WHERE " + base)
+            sql = ("SELECT f.id FROM files f "
+                   "JOIN files_fts ON files_fts.rowid=f.id WHERE " + base +
+                   " ORDER BY COALESCE(f.sort_key, lower(f.rel_path)) ASC")
             params = [match] + params
         else:
-            sql = "SELECT f.id, f.rel_path FROM files f WHERE " + " AND ".join(where)
-        rows = conn.execute(sql, params).fetchall()
-        rows.sort(key=lambda r: natural_key(r["rel_path"]))
-        ids = [r["id"] for r in rows]
+            sql = ("SELECT f.id FROM files f WHERE " + " AND ".join(where) +
+                   " ORDER BY COALESCE(f.sort_key, lower(f.rel_path)) ASC")
+        ids = [r["id"] for r in conn.execute(sql, params).fetchall()]
     else:
         order_map = {"newest": "f.mtime DESC", "oldest": "f.mtime ASC",
                      "size_desc": "f.size DESC", "size_asc": "f.size ASC",
@@ -914,24 +917,26 @@ def api_search_ids(q: str = "", type: Optional[str] = None,
         }
         order_clause = order_map.get(order, None)
 
-        # Performance: bei order=path sortieren wir in Python statt via SQLite-
-        # Collation. Custom-Collation kostet pro Vergleich einen Python-Callback,
-        # bei 50k Files sind das tausende Sekunden langsamer als ein einmaliger
-        # Python-Sort der ganzen Liste.
+        # path-Sortierung via vorberechnetem sort_key + Index = schnell.
+        # COALESCE als Fallback fuer Files ohne sort_key (Migration nicht durch).
         if order == "path":
             if q.strip():
                 match = fts_query(q)
                 base_where = "files_fts MATCH ? AND " + " AND ".join(where)
                 sql = ("SELECT f.id, f.rel_path, f.type "
                        "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
-                       "WHERE " + base_where)
-                params = [match] + params
+                       "WHERE " + base_where +
+                       " ORDER BY COALESCE(f.sort_key, lower(f.rel_path)) ASC "
+                       "LIMIT ?")
+                params = [match] + params + [max_results]
             else:
                 base_where = " AND ".join(where)
-                sql = "SELECT f.id, f.rel_path, f.type FROM files f WHERE " + base_where
-            all_rows = conn.execute(sql, params).fetchall()
-            all_rows.sort(key=lambda r: natural_key(r["rel_path"]))
-            rows = all_rows[:max_results]
+                sql = ("SELECT f.id, f.rel_path, f.type FROM files f WHERE "
+                       + base_where +
+                       " ORDER BY COALESCE(f.sort_key, lower(f.rel_path)) ASC "
+                       "LIMIT ?")
+                params += [max_results]
+            rows = conn.execute(sql, params).fetchall()
         else:
             if q.strip():
                 match = fts_query(q)
