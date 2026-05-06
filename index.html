@@ -1813,6 +1813,15 @@ function _showSlideDiag(text, color) {
   el._t = setTimeout(() => { el.style.display = "none"; }, 4500);
 }
 
+// Mirror der Python natural_key fuer Pfad-Sortierung im Browser.
+// Reicht aus um cur an die "richtige" Stelle einzufuegen wenn er
+// nicht direkt in der Server-Liste vorkommt.
+function _naturalKey(s) {
+  if (!s) return "";
+  return s.toLowerCase().replace(/(\d+)/g,
+    (m) => m.padStart(10, "0"));
+}
+
 function _expandPlaylist(full) {
   const cur = slideOrder[slideIdx];
   if (!cur) {
@@ -1820,19 +1829,24 @@ function _expandPlaylist(full) {
     slideOrder = full.slice();
     slideIdx = 0;
     _showSlideDiag(
-      "Diag: cur=NULL, starte bei Pfad-Liste[0] " +
-      `(${full.length} Files)`, "#f88");
+      `Diag: cur=NULL, starte bei Pfad-Liste[0] (${full.length} Files)`,
+      "#f88");
     showSlide();
     return;
   }
   let basePlaylist = full;
   let idxInFull = full.findIndex(r => r.id === cur.id);
   if (idxInFull < 0) {
+    // cur fehlt - an Sortier-Position einfuegen damit Forward in der
+    // Pfad-Nachbarschaft weiter laeuft (nicht am Listenanfang)
+    const curKey = _naturalKey(cur.path || "");
+    let insertAt = full.findIndex(r => _naturalKey(r.path || "") > curKey);
+    if (insertAt < 0) insertAt = full.length;
+    basePlaylist = [...full.slice(0, insertAt), cur, ...full.slice(insertAt)];
+    idxInFull = insertAt;
     _showSlideDiag(
-      `Diag: aktuelles Bild (id ${cur.id}) NICHT in Pfad-Liste ` +
-      `(${full.length} Files). Anker prepended.`, "#f88");
-    basePlaylist = [cur, ...full];
-    idxInFull = 0;
+      `Diag: cur (id ${cur.id}) fehlt in Pfad-Liste, ` +
+      `an Pos ${insertAt+1}/${basePlaylist.length} eingefuegt`, "#fa3");
   } else {
     _showSlideDiag(
       `Diag: Pfad-Liste aktiv. Position ${idxInFull+1}/${full.length}`,
