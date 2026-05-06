@@ -1748,14 +1748,23 @@ function startSlideshowAt(item) {
 }
 
 function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
-  // Initial-Playlist setzen
-  slidePlaylist = initialImgs;
+  slidePlaylist = (initialImgs || []).slice();
   slideMode = "serial";
   slideOrder = slidePlaylist.slice();
-  slideIdx = clickedItem
-    ? slideOrder.findIndex(r => r.id === clickedItem.id)
-    : 0;
-  if (slideIdx < 0) slideIdx = 0;
+  // Robust: clicked item garantiert in slideOrder. So bleibt cur bei einem
+  // spaeteren expand findbar, und der Slideshow-Start zeigt nicht das
+  // erste Bild der Pfad-Liste sondern das geklickte.
+  if (clickedItem) {
+    let idx = slideOrder.findIndex(r => r.id === clickedItem.id);
+    if (idx < 0) {
+      slideOrder = [clickedItem, ...slideOrder];
+      slidePlaylist = slideOrder.slice();
+      idx = 0;
+    }
+    slideIdx = idx;
+  } else {
+    slideIdx = 0;
+  }
   slidePaused = true;
   slideTextOn = true;
   $("#slide-pause").textContent = "Play";
@@ -1786,35 +1795,43 @@ function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
 
 function _expandPlaylist(full) {
   const cur = slideOrder[slideIdx];
+  console.log("[expandPlaylist] start. cur=",
+    cur ? `id=${cur.id} ${cur.path}` : "<NULL>",
+    "slideOrder.length=", slideOrder.length,
+    "slideIdx=", slideIdx,
+    "full.length=", full.length,
+    "slideMode=", slideMode);
   if (!cur) {
-    // Initial-Liste war leer
+    console.warn("[expandPlaylist] cur null - starte bei full[0]");
     slidePlaylist = full;
     slideOrder = full.slice();
     slideIdx = 0;
     showSlide();
     return;
   }
-  // Wir wollen IMMER auf die Pfad-Reihenfolge wechseln, auch wenn das
-  // aktuelle Bild nicht direkt im Full enthalten ist.
   let basePlaylist = full;
   let idxInFull = full.findIndex(r => r.id === cur.id);
   if (idxInFull < 0) {
-    // cur fehlt in full - haengen wir's vorne dran damit es Anker bleibt.
-    console.warn("[expandPlaylist] aktuelles Bild nicht in Pfad-Liste - prepend");
+    console.warn("[expandPlaylist] cur id=" + cur.id +
+      " nicht in full(" + full.length + ") - prepend als Anker. " +
+      "Mögliche Ursache: max_results-Cap, anderer Filter, oder " +
+      "Datenrace. Ersten 3 IDs in full:",
+      full.slice(0,3).map(r=>r.id));
     basePlaylist = [cur, ...full];
     idxInFull = 0;
+  } else {
+    console.log("[expandPlaylist] cur an Position", idxInFull, "in full");
   }
   slidePlaylist = basePlaylist;
   if (slideMode === "random") {
-    // Anker behalten, Rest shufflen
     const rest = basePlaylist.filter(r => r.id !== cur.id);
     slideOrder = [cur, ...shuffled(rest)];
     slideIdx = 0;
   } else {
-    // Pfad-Reihenfolge ist jetzt aktiv
     slideOrder = basePlaylist.slice();
     slideIdx = idxInFull;
   }
+  console.log("[expandPlaylist] done. slideIdx=", slideIdx, "slideOrder.length=", slideOrder.length);
   showSlide();
 }
 
