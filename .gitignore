@@ -18,7 +18,6 @@ config.toml
 synonyms.json
 manual_tags.json
 prompt.txt
-prompt.default.txt
 
 # Editor / OS
 .vscode/
