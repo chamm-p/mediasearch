@@ -847,14 +847,16 @@ def api_search_locate(file_id: int, q: str = "",
 @app.get("/api/search/ids")
 def api_search_ids(q: str = "", type: Optional[str] = None,
                    order: str = "relevance",
-                   max_results: int = 100000) -> dict:
+                   max_results: int = 1000000) -> dict:
     """Liefert ALLE matchenden Items (leichtgewichtig: id+path+type).
     Fuer Slideshow ueber die ganze Treffermenge."""
     root = current_root()
     if root is None:
         return {"items": [], "no_root": True}
     init_db(root)
-    max_results = max(1, min(int(max_results), 200000))
+    # Hard-Cap auf 2 Mio - schuetzt vor Memory-Explosion, sonst praktisch
+    # nie limitierend (280k Files = ~33MB JSON, weit unter 2M)
+    max_results = max(1, min(int(max_results), 2000000))
     conn = connect(root)
     try:
         params: list = []
