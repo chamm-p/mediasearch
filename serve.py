@@ -777,16 +777,44 @@ def api_search(q: str = "", type: Optional[str] = None,
     limit = max(1, min(limit, 1000))
     conn = connect(root)
     try:
+        type_filter = type if type in ("image", "video") else None
+
+        # Schneller Pfad fuer deterministische Sortierungen: gecachte
+        # ID-Liste nutzen, slicen, dann metadata fuer 80 Files holen
+        # (statt 280k mit Custom-Collation zu sortieren).
+        if order in ("path", "newest", "oldest", "size_desc", "size_asc"):
+            ids = _get_sorted_ids(conn, q, type_filter, order)
+            total = len(ids)
+            page_ids = ids[offset:offset + limit]
+            if not page_ids:
+                return {"total": total, "offset": offset, "limit": limit,
+                        "results": []}
+            ph = ",".join("?" * len(page_ids))
+            rows_raw = conn.execute(
+                "SELECT id, rel_path, type, description, tags, manual_tags "
+                f"FROM files WHERE id IN ({ph})", page_ids).fetchall()
+            by_id = {r["id"]: r for r in rows_raw}
+            def _split(s): return [_safe(t.strip()) for t in (s or "").split(",") if t.strip()]
+            results = []
+            for fid in page_ids:
+                r = by_id.get(fid)
+                if r is None:
+                    continue
+                results.append({
+                    "id": r["id"], "path": _safe(r["rel_path"]),
+                    "type": r["type"],
+                    "description": _safe(r["description"]),
+                    "tags": _split(r["tags"]),
+                    "manual_tags": _split(r["manual_tags"]),
+                })
+            return {"total": total, "offset": offset, "limit": limit,
+                    "results": results}
+
         params: list = []
         where = ["f.status='done'"]
-        if type in ("image","video"):
-            where.append("f.type=?"); params.append(type)
+        if type_filter:
+            where.append("f.type=?"); params.append(type_filter)
         order_map = {
-            "newest":    "f.mtime DESC",
-            "oldest":    "f.mtime ASC",
-            "path":      "f.rel_path COLLATE NATSORT ASC",
-            "size_desc": "f.size DESC",
-            "size_asc":  "f.size ASC",
             "random":    "RANDOM()",
             "relevance": None,   # nur bei Suche; sonst f.id DESC
         }
