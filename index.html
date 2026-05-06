@@ -438,6 +438,12 @@
 
 <div id="mtags">
   <span id="mtags-groups"></span>
+  <span style="margin-left:6px">
+    <input id="mtags-custom" type="text" placeholder="eigener Tag + Enter"
+           style="background:var(--bg-3);color:var(--text);border:1px solid var(--line);
+                  border-radius:14px;padding:3px 10px;font-size:0.85rem;
+                  width:170px" />
+  </span>
   <span class="info" id="mtags-info">Klick = anhaengen, Shift-Klick = entfernen</span>
 </div>
 
@@ -1487,6 +1493,23 @@ $("#dupes-run").addEventListener("click", async () => {
   } catch (e) {
     $("#dupes-result").innerHTML = `<div style="color:var(--err)">Fehler: ${escapeHtml(String(e))}</div>`;
   }
+});
+
+// ---- Custom Manual Tag Input ----
+$("#mtags-custom").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const inp = e.target;
+  const tag = inp.value.trim().toLowerCase();
+  if (!tag) return;
+  if (!selected.size) {
+    $("#mtags-info").textContent = "kein File ausgewaehlt";
+    return;
+  }
+  // shift-Enter -> entfernen, sonst anhaengen
+  const action = e.shiftKey ? "remove" : "add";
+  await applyManualTag(tag, action, null);
+  inp.value = "";
 });
 
 $("#s-optimize").addEventListener("click", async () => {

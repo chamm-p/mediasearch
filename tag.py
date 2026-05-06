@@ -62,26 +62,43 @@ PROMPT = (
     "Erklaerungen, keine Anrede, keine Schlussformel.\n"
     "3) Sprache: Deutsch.\n\n"
     "JSON-SCHEMA:\n"
-    '{"description": "<MAXIMAL ZWEI knappe Saetze, zusammen unter 200 '
-    'Zeichen>", "tags": ["<kleinbuchstabe>", "<schlagwort>", "..."]}\n\n'
-    "TAG-REGELN:\n"
-    "- 8 bis 25 Tags, alles lowercase, kurze Woerter oder Nominalphrasen.\n"
-    "- Genau ein Oberbegriff pro Konzept, KEINE Synonyme. Beispiele: 'boot' "
-    "(nicht zusaetzlich 'schiff', 'dampfer', 'yacht'); 'auto' (nicht "
-    "'wagen', 'pkw', 'fahrzeug'); 'kind' (nicht 'junge', 'maedchen', "
-    "'kleinkind').\n"
-    "- Bevorzuge das gebraeuchlichste deutsche Wort.\n"
-    "- Bei Personen keine Identifikation, nur generisch ('kind', 'frau', "
-    "'gruppe').\n"
-    "- Decke ab: Motive, Objekte, Handlungen, Setting, dominante Farben, "
-    "Lichtstimmung, Stil, Atmosphaere, ggf. sichtbarer Text.\n"
+    '{"description": "<1-2 knappe Saetze unter 200 Zeichen>", '
+    '"tags": ["<schlagwort>", "..."]}\n\n'
+    "TAG-PRIORITAETEN (in dieser Reihenfolge):\n"
+    "1) WER/WAS ist abgebildet (Subjekt/Objekt): kind, frau, mann, hund, "
+    "katze, auto, fahrrad, blume, ...\n"
+    "2) WAS GESCHIEHT (Handlung als VERB im Infinitiv): spielen, rennen, "
+    "schwimmen, lachen, schlafen, kochen, schaukeln, wandern, kuessen, "
+    "tanzen, ...\n"
+    "3) WO (konkrete Orte/Settings): strand, park, kueche, wald, see, "
+    "gebirge, kirche, kinderzimmer, ...\n"
+    "4) Auffaellige spezifische Objekte im Vordergrund: schaukel, fahrrad, "
+    "torte, geburtstag, weihnachtsbaum, ...\n\n"
+    "VERMEIDE diese Arten von Tags (zu vage oder generisch):\n"
+    "- Lichtstimmung/Atmosphaere: 'warm', 'kalt', 'hell', 'dunkel', "
+    "'gemuetlich', 'romantisch'\n"
+    "- Allgemeine Setting-Klassen: 'outdoor', 'indoor', 'natur', "
+    "'umwelt' (sage stattdessen den konkreten Ort: 'strand', 'wohnzimmer')\n"
+    "- Farben (nur wenn DAS Hauptmotiv und auffaellig: 'rotes auto')\n"
+    "- Stil/Wertung: 'schoen', 'huebsch', 'glücklich', 'professionell'\n"
+    "- Material/Textur ohne erkennbaren Bezug\n\n"
+    "WEITERE TAG-REGELN:\n"
+    "- 6 bis 20 Tags. Lieber wenige praezise als viele vage.\n"
+    "- Alles lowercase, einzelne Woerter oder kurze Nominalphrasen.\n"
+    "- Genau ein Oberbegriff pro Konzept (kein 'boot' UND 'schiff' UND "
+    "'yacht'). Bevorzuge das gebraeuchlichste deutsche Wort.\n"
+    "- Bei Personen keine Identifikation, nur generisch (kind, frau, gruppe).\n"
     "- Keine Duplikate.\n\n"
     "BESCHREIBUNG-REGELN:\n"
-    "- Strikt 1-2 Saetze, sachlich, ohne Wertung, ohne Floskeln "
-    "('Auf dem Bild sehen wir...' weglassen).\n"
-    "- Beschreibe ausschliesslich das tatsaechlich sichtbare Bild. "
-    "Falls eine system message Hintergrundkontext enthaelt: NICHT abschreiben, "
-    "NICHT wiederholen - nur als Interpretationshilfe nutzen.\n"
+    "- Strikt 1-2 Saetze, sachlich, ohne Floskeln ('Auf dem Bild sehen wir' "
+    "weglassen, direkt mit dem Subjekt anfangen).\n"
+    "- Beschreibe nur Sichtbares. System-Message-Kontext NICHT abschreiben.\n\n"
+    "BEISPIEL gut:\n"
+    '{"description": "Kind schaukelt im Park, Mutter schiebt von hinten an.", '
+    '"tags": ["kind", "schaukeln", "schaukel", "park", "mutter", "spielen"]}\n'
+    "BEISPIEL schlecht (zu vage):\n"
+    '{"description": "Schoenes warmes Bild im Park", '
+    '"tags": ["outdoor", "warm", "natur", "park", "licht", "hell", "kind"]}\n'
 )
 
 
@@ -90,6 +107,72 @@ def b64_data_url(jpeg: bytes) -> str:
 
 
 _DECODER = json.JSONDecoder()
+
+
+def _try_json_extract(s: str) -> dict | None:
+    """Sucht nach allen '{', versucht raw_decode, akzeptiert mit description/tags."""
+    start = s.find("{")
+    while start >= 0:
+        try:
+            obj, _end = _DECODER.raw_decode(s[start:])
+            if isinstance(obj, dict) and ("tags" in obj or "description" in obj):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        start = s.find("{", start + 1)
+    return None
+
+
+def _try_json_repair(s: str) -> dict | None:
+    """Versucht JSON zu reparieren: trailing commas, fehlende Closing-Brackets."""
+    start = s.find("{")
+    if start < 0:
+        return None
+    cand = s[start:]
+    # entferne trailing kommas vor } oder ]
+    fixed = re.sub(r",\s*([}\]])", r"\1", cand)
+    # fehlende klammern haengen wir an
+    open_braces  = fixed.count("{") - fixed.count("}")
+    open_brackets = fixed.count("[") - fixed.count("]")
+    if open_brackets > 0:
+        fixed += "]" * open_brackets
+    if open_braces > 0:
+        fixed += "}" * open_braces
+    try:
+        obj = json.loads(fixed)
+        if isinstance(obj, dict) and ("tags" in obj or "description" in obj):
+            return obj
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _try_text_fallback(s: str) -> dict | None:
+    """Letzter Versuch: aus 'Tags: a, b, c' oder Bullet-Listen Tags ziehen.
+    Description ist dann der Text vor 'Tags:'."""
+    # Tags-Block-Header: 'Tags:' / 'Schlagworte:' / 'Keywords:'
+    m = re.search(
+        r"(tags|schlagworte|schlagw[oe]rter|keywords?)\s*[:=]\s*",
+        s, re.IGNORECASE,
+    )
+    if not m:
+        return None
+    after = s[m.end():]
+    # alles bis zur naechsten Leerzeile oder zum Ende sammeln
+    block = re.split(r"\n\s*\n", after, maxsplit=1)[0]
+    # Bullet-Marker am Zeilenanfang entfernen, dann an Komma/Semikolon/NL splitten
+    block = re.sub(r"(?m)^\s*[-*•]\s*", "", block)
+    parts = re.split(r"[,;\n/]+", block)
+    tags = [p.strip().strip('"\'').strip().lower() for p in parts]
+    tags = [t for t in tags if t and len(t) <= 60]
+    if not tags:
+        return None
+    desc_part = s[:m.start()].strip()
+    if not desc_part:
+        desc_part = ""
+    sent = re.split(r"(?<=[.!?])\s+", desc_part) if desc_part else []
+    desc = " ".join(sent[:2])[:300] if sent else ""
+    return {"description": desc, "tags": tags[:30]}
 
 # Reasoning-/Thinking-Muster, die wir aus Roh-Antworten entfernen
 _THINK_TAG_RE = re.compile(r"<think(?:ing)?[^>]*>.*?</think(?:ing)?>",
@@ -141,32 +224,27 @@ def strip_reasoning(text: str) -> str:
 
 
 def parse_response(text: str) -> tuple[str, list[str]]:
-    """Robust gegen praeambeln, code fences, nachgereihten kommentar.
-    Findet das erste vollstaendige JSON-Objekt im Text."""
+    """Robust gegen Praeambeln, Code-Fences, nachgereihten Kommentar,
+    halb-kaputtes JSON, Markdown-Listen und 'Tags:'/'Schlagworte:'-Pseudo-JSON."""
     if not text:
         return "", []
     s = text.strip()
-    # leading code fence weg
-    s = re.sub(r"^```(?:json)?\s*", "", s)
-    s = re.sub(r"\s*```\s*$", "", s)
-    # ersten '{' suchen, dann mit raw_decode greedy bis zum erstem gueltigen Object
-    start = s.find("{")
-    if start < 0:
-        raise ValueError("kein '{' in LLM-Antwort gefunden")
-    last_err: Exception | None = None
-    data = None
-    while start >= 0:
-        try:
-            obj, _end = _DECODER.raw_decode(s[start:])
-            # nur akzeptieren wenn Object mit erwarteten keys
-            if isinstance(obj, dict) and ("tags" in obj or "description" in obj):
-                data = obj
-                break
-        except json.JSONDecodeError as e:
-            last_err = e
-        start = s.find("{", start + 1)
+    # alle Code-Fences entfernen, egal wo
+    s = re.sub(r"```(?:json|JSON)?", "", s)
+    # <think>-Bloecke (Reasoning-Modelle)
+    s = re.sub(r"<think(?:ing)?[^>]*>.*?</think(?:ing)?>", " ",
+               s, flags=re.DOTALL | re.IGNORECASE)
+    # Versuch 1: JSON via raw_decode
+    data = _try_json_extract(s)
+    # Versuch 2: bei trailing-comma- oder fehlendes-} Bug: erste { bis Ende auto-close
     if data is None:
-        raise last_err or ValueError("kein gueltiges Tag-JSON gefunden")
+        data = _try_json_repair(s)
+    # Versuch 3: "Tags: xxx, yyy" / "Schlagworte: ..." aus Prosa rausziehen
+    if data is None:
+        data = _try_text_fallback(s)
+    if data is None:
+        raise ValueError("kein verwertbares Tag-Format in LLM-Antwort: "
+                         + (s[:200] if s else "<leer>"))
     desc = str(data.get("description", "")).strip()
     # Reasoning-Praefixe entfernen, falls Modell sowas in description packt
     desc = strip_reasoning(desc) or desc
