@@ -1793,34 +1793,50 @@ function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
   }
 }
 
+function _showSlideDiag(text, color) {
+  // 4-Sekunden-Banner oben mittig in der Slideshow zur Diagnose
+  let el = document.getElementById("slide-diag");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "slide-diag";
+    el.style.cssText = "position:absolute;top:48px;left:50%;transform:translateX(-50%);" +
+      "background:rgba(20,20,20,.92);border:1px solid #555;border-radius:6px;" +
+      "padding:8px 14px;font-size:0.85rem;z-index:5;max-width:80vw;" +
+      "white-space:pre-wrap;text-align:center;";
+    $("#slideshow").appendChild(el);
+  }
+  el.style.color = color || "#ddd";
+  el.style.borderColor = color || "#555";
+  el.textContent = text;
+  el.style.display = "block";
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.display = "none"; }, 4500);
+}
+
 function _expandPlaylist(full) {
   const cur = slideOrder[slideIdx];
-  console.log("[expandPlaylist] start. cur=",
-    cur ? `id=${cur.id} ${cur.path}` : "<NULL>",
-    "slideOrder.length=", slideOrder.length,
-    "slideIdx=", slideIdx,
-    "full.length=", full.length,
-    "slideMode=", slideMode);
   if (!cur) {
-    console.warn("[expandPlaylist] cur null - starte bei full[0]");
     slidePlaylist = full;
     slideOrder = full.slice();
     slideIdx = 0;
+    _showSlideDiag(
+      "Diag: cur=NULL, starte bei Pfad-Liste[0] " +
+      `(${full.length} Files)`, "#f88");
     showSlide();
     return;
   }
   let basePlaylist = full;
   let idxInFull = full.findIndex(r => r.id === cur.id);
   if (idxInFull < 0) {
-    console.warn("[expandPlaylist] cur id=" + cur.id +
-      " nicht in full(" + full.length + ") - prepend als Anker. " +
-      "Mögliche Ursache: max_results-Cap, anderer Filter, oder " +
-      "Datenrace. Ersten 3 IDs in full:",
-      full.slice(0,3).map(r=>r.id));
+    _showSlideDiag(
+      `Diag: aktuelles Bild (id ${cur.id}) NICHT in Pfad-Liste ` +
+      `(${full.length} Files). Anker prepended.`, "#f88");
     basePlaylist = [cur, ...full];
     idxInFull = 0;
   } else {
-    console.log("[expandPlaylist] cur an Position", idxInFull, "in full");
+    _showSlideDiag(
+      `Diag: Pfad-Liste aktiv. Position ${idxInFull+1}/${full.length}`,
+      "#8d8");
   }
   slidePlaylist = basePlaylist;
   if (slideMode === "random") {
@@ -1831,7 +1847,6 @@ function _expandPlaylist(full) {
     slideOrder = basePlaylist.slice();
     slideIdx = idxInFull;
   }
-  console.log("[expandPlaylist] done. slideIdx=", slideIdx, "slideOrder.length=", slideOrder.length);
   showSlide();
 }
 
