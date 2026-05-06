@@ -2133,6 +2133,24 @@ async function closeSlideshow() {
         return;
       }
     }
+    // 2b) Fastpath: Grid in Pfad-Reihenfolge + Type=Image
+    //     -> slidePlaylist (path-ordered) hat exakt die gleiche Reihenfolge
+    //     wie das Grid. Position lokal berechnen, kein Server-Roundtrip.
+    if ($("#order").value === "path"
+        && $("#type").value === "image"
+        && slidePlaylist && slidePlaylist.length) {
+      const pos = slidePlaylist.findIndex(r => r.id === lastId);
+      if (pos >= 0) {
+        const pageSize = parseInt($("#limit-q").value) || 200;
+        const targetOffset = Math.floor(pos / pageSize) * pageSize;
+        console.log("[closeSlideshow] fastpath via slidePlaylist -> offset", targetOffset);
+        await search({offset: targetOffset, reset: false, scrollTop: false});
+        if (!scrollToCard(lastId)) {
+          requestAnimationFrame(() => scrollToCard(lastId));
+        }
+        return;
+      }
+    }
     // 3) Random-Sort? Dann bringt locate nichts - abbrechen.
     if ($("#order").value === "random") {
       console.log("[closeSlideshow] random-sort & nicht im cache - kein Sprung");

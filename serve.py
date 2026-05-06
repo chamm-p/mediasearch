@@ -615,6 +615,59 @@ def api_tagger_log(since: int = 0) -> dict:
 _STATS_CACHE: dict = {"t": 0.0, "key": "", "data": None}
 _STATS_TTL = 5.0   # s
 
+# Cache fuer sortierte ID-Listen (path/oldest/newest...) - vermeidet
+# wiederholtes Sortieren von 100k+ Eintraegen bei jedem locate-Call.
+_SORTED_IDS_CACHE: dict = {}     # key=(q, type, order) -> {t, ids}
+_SORTED_IDS_TTL = 60.0           # s
+
+def _get_sorted_ids(conn, q: str, type_filter: str | None,
+                    order: str) -> list[int]:
+    """Liefert die ID-Liste in der gewaehlten Reihenfolge, gecached.
+    Nur fuer deterministische Sortierungen sinnvoll (path/newest/oldest)."""
+    key = (q.strip(), type_filter or "", order)
+    now = time.time()
+    cached = _SORTED_IDS_CACHE.get(key)
+    if cached and (now - cached["t"]) < _SORTED_IDS_TTL:
+        return cached["ids"]
+    where = ["f.status='done'"]
+    params: list = []
+    if type_filter:
+        where.append("f.type=?"); params.append(type_filter)
+    if order == "path":
+        if q.strip():
+            match = fts_query(q)
+            base = "files_fts MATCH ? AND " + " AND ".join(where)
+            sql = ("SELECT f.id, f.rel_path FROM files f "
+                   "JOIN files_fts ON files_fts.rowid=f.id WHERE " + base)
+            params = [match] + params
+        else:
+            sql = "SELECT f.id, f.rel_path FROM files f WHERE " + " AND ".join(where)
+        rows = conn.execute(sql, params).fetchall()
+        rows.sort(key=lambda r: natural_key(r["rel_path"]))
+        ids = [r["id"] for r in rows]
+    else:
+        order_map = {"newest": "f.mtime DESC", "oldest": "f.mtime ASC",
+                     "size_desc": "f.size DESC", "size_asc": "f.size ASC",
+                     "relevance": "f.id DESC"}
+        clause = order_map.get(order, "f.id DESC")
+        if q.strip():
+            match = fts_query(q)
+            base = "files_fts MATCH ? AND " + " AND ".join(where)
+            sql = ("SELECT f.id FROM files f JOIN files_fts ON files_fts.rowid=f.id "
+                   "WHERE " + base + " ORDER BY " + clause)
+            params = [match] + params
+        else:
+            sql = "SELECT f.id FROM files f WHERE " + " AND ".join(where) + \
+                  " ORDER BY " + clause
+        rows = conn.execute(sql, params).fetchall()
+        ids = [r["id"] for r in rows]
+    _SORTED_IDS_CACHE[key] = {"t": now, "ids": ids}
+    # Cache klein halten
+    if len(_SORTED_IDS_CACHE) > 8:
+        oldest = min(_SORTED_IDS_CACHE.items(), key=lambda kv: kv[1]["t"])
+        _SORTED_IDS_CACHE.pop(oldest[0], None)
+    return ids
+
 @app.post("/api/db/optimize")
 def api_db_optimize() -> dict:
     root = current_root()
@@ -782,64 +835,23 @@ def api_search_locate(file_id: int, q: str = "",
                        order: str = "relevance",
                        max_scan: int = 200000) -> dict:
     """Findet die Position (offset) einer Datei in der aktuellen
-    Suchergebnis-Reihenfolge. -1 wenn nicht enthalten oder Suche nicht laeuft."""
+    Suchergebnis-Reihenfolge. -1 wenn nicht enthalten."""
     root = current_root()
     if root is None:
         return {"offset": -1}
     init_db(root)
+    if order == "random":
+        # bei random ist locate sinnlos (jede Anfrage andere Reihenfolge)
+        return {"offset": -1, "note": "random order has no fixed offsets"}
+    type_filter = type if type in ("image", "video") else None
     conn = connect(root)
     try:
-        params: list = []
-        where = ["f.status='done'"]
-        if type in ("image", "video"):
-            where.append("f.type=?"); params.append(type)
-        order_map = {
-            "newest":    "f.mtime DESC",
-            "oldest":    "f.mtime ASC",
-            "path":      "f.rel_path COLLATE NATSORT ASC",
-            "size_desc": "f.size DESC",
-            "size_asc":  "f.size ASC",
-            "random":    "RANDOM()",
-            "relevance": None,
-        }
-        order_clause = order_map.get(order, None)
-        # Bei order=path: in Python sortieren statt via SQLite-Collation
-        # (massiv schneller bei vielen Files)
-        if order == "path":
-            if q.strip():
-                match = fts_query(q)
-                base_where = "files_fts MATCH ? AND " + " AND ".join(where)
-                sql = ("SELECT f.id, f.rel_path "
-                       "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
-                       "WHERE " + base_where)
-                params = [match] + params
-            else:
-                base_where = " AND ".join(where)
-                sql = "SELECT f.id, f.rel_path FROM files f WHERE " + base_where
-            rows = conn.execute(sql, params).fetchall()
-            rows.sort(key=lambda r: natural_key(r["rel_path"]))
-            if len(rows) > int(max_scan):
-                rows = rows[:int(max_scan)]
-        else:
-            if q.strip():
-                match = fts_query(q)
-                base_where = "files_fts MATCH ? AND " + " AND ".join(where)
-                sql = ("SELECT f.id "
-                       "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
-                       "WHERE " + base_where +
-                       " ORDER BY " + (order_clause or "bm25(files_fts)") +
-                       " LIMIT ?")
-                params = [match] + params + [int(max_scan)]
-            else:
-                base_where = " AND ".join(where)
-                sql = ("SELECT f.id FROM files f WHERE " + base_where +
-                       " ORDER BY " + (order_clause or "f.id DESC") + " LIMIT ?")
-                params += [int(max_scan)]
-            rows = conn.execute(sql, params).fetchall()
-        for i, r in enumerate(rows):
-            if r["id"] == file_id:
-                return {"offset": i, "total_scanned": len(rows)}
-        return {"offset": -1, "total_scanned": len(rows)}
+        ids = _get_sorted_ids(conn, q, type_filter, order)
+        # Schnelle Suche per Index-Lookup statt linearer Iteration
+        for i, row_id in enumerate(ids):
+            if row_id == file_id:
+                return {"offset": i, "total_scanned": len(ids)}
+        return {"offset": -1, "total_scanned": len(ids)}
     finally:
         conn.close()
 
@@ -1026,6 +1038,7 @@ def api_duplicates(mode: str = "exact", threshold: int = 6,
     type_filter = type if type in ("image", "video") else None
 
     conn = connect(root)
+
     try:
         if mode == "exact":
             type_clause = " AND type=?" if type_filter else ""
