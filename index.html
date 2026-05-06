@@ -1787,34 +1787,34 @@ function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
 function _expandPlaylist(full) {
   const cur = slideOrder[slideIdx];
   if (!cur) {
-    // Initial-Liste war leer (z.B. Klick aus Auswahl die nur Videos hatte) -
-    // einfach komplett uebernehmen
+    // Initial-Liste war leer
     slidePlaylist = full;
     slideOrder = full.slice();
     slideIdx = 0;
     showSlide();
     return;
   }
-  // Position des aktuell gezeigten Bildes in der neuen Vollliste suchen
-  const idxInFull = full.findIndex(r => r.id === cur.id);
+  // Wir wollen IMMER auf die Pfad-Reihenfolge wechseln, auch wenn das
+  // aktuelle Bild nicht direkt im Full enthalten ist.
+  let basePlaylist = full;
+  let idxInFull = full.findIndex(r => r.id === cur.id);
   if (idxInFull < 0) {
-    // cur ist nicht in der neuen Liste enthalten - z.B. weil max_results
-    // gecappt hat, oder weil das Bild zwischenzeitlich aus der Suche
-    // gefallen ist. Wir aendern NICHTS an der aktuellen Anzeige.
-    console.warn("[expandPlaylist] aktuelles Bild nicht in Vollliste - keine Expansion");
-    return;
+    // cur fehlt in full - haengen wir's vorne dran damit es Anker bleibt.
+    console.warn("[expandPlaylist] aktuelles Bild nicht in Pfad-Liste - prepend");
+    basePlaylist = [cur, ...full];
+    idxInFull = 0;
   }
-  slidePlaylist = full;
+  slidePlaylist = basePlaylist;
   if (slideMode === "random") {
     // Anker behalten, Rest shufflen
-    const rest = full.filter(r => r.id !== cur.id);
+    const rest = basePlaylist.filter(r => r.id !== cur.id);
     slideOrder = [cur, ...shuffled(rest)];
     slideIdx = 0;
   } else {
-    slideOrder = full.slice();
+    // Pfad-Reihenfolge ist jetzt aktiv
+    slideOrder = basePlaylist.slice();
     slideIdx = idxInFull;
   }
-  // showSlide updatet Info-Zeile + Pfad/Name; src bleibt gleich (kein Reload)
   showSlide();
 }
 
