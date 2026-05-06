@@ -11,7 +11,7 @@ import json
 import re
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
 from pathlib import Path
 
 from openai import OpenAI
@@ -53,7 +53,11 @@ from common import (
     video_frames_for_tagging,
 )
 
-PROMPT = (
+# Default-Prompt. Wird verwendet wenn neben tag.py keine 'prompt.txt' liegt.
+# Eigene Anpassungen besser in 'prompt.txt' machen - die ist gitignored und
+# ueberlebt damit 'git pull'. Eine Kopie dieses Defaults wird beim ersten
+# Start als 'prompt.default.txt' rausgeschrieben (falls nicht existent).
+PROMPT_DEFAULT = (
     "Du bist ein praeziser Medien-Tagger. Du erhaelst entweder ein Bild oder "
     "zwei Frames aus einem Video.\n\n"
     "AUSGABE-REGELN (strikt einhalten):\n"
@@ -100,6 +104,40 @@ PROMPT = (
     '{"description": "Schoenes warmes Bild im Park", '
     '"tags": ["outdoor", "warm", "natur", "park", "licht", "hell", "kind"]}\n'
 )
+
+
+def load_prompt() -> tuple[str, str]:
+    """Laedt den Tag-Prompt.
+
+    Sucht 'prompt.txt' neben tag.py. Falls vorhanden, wird sie verwendet
+    (Userdaten ueberleben 'git pull', weil prompt.txt gitignored ist).
+    Andernfalls wird PROMPT_DEFAULT verwendet und als 'prompt.default.txt'
+    rausgeschrieben, falls die Vorlage noch nicht existiert - so hat der
+    User immer eine Referenz zum Vergleichen oder Kopieren.
+
+    Returns: (prompt_text, source_label)
+    """
+    here = Path(__file__).resolve().parent
+    user_file = here / "prompt.txt"
+    default_file = here / "prompt.default.txt"
+    # Default-Vorlage einmalig ausschreiben (zum Vergleichen / Kopieren)
+    try:
+        if not default_file.exists():
+            default_file.write_text(PROMPT_DEFAULT, encoding="utf-8")
+    except OSError:
+        pass
+    if user_file.exists():
+        try:
+            txt = user_file.read_text(encoding="utf-8")
+            if txt.strip():
+                return txt, str(user_file.name)
+        except OSError as e:
+            print(f"Warnung: prompt.txt konnte nicht gelesen werden ({e}), "
+                  f"nutze Default.", flush=True)
+    return PROMPT_DEFAULT, "built-in default"
+
+
+PROMPT, _PROMPT_SRC = load_prompt()
 
 
 def b64_data_url(jpeg: bytes) -> str:
@@ -737,6 +775,7 @@ def cmd_tag(args: argparse.Namespace) -> None:
     init_db(root)
 
     print(f"tag.py gestartet, root={root}", flush=True)
+    print(f"prompt: {_PROMPT_SRC} ({len(PROMPT)} zeichen)", flush=True)
     if not args.no_scan:
         t_scan = time.time()
         new, changed, moved, removed, total = discover(root)
@@ -775,39 +814,62 @@ def cmd_tag(args: argparse.Namespace) -> None:
     done = errors = 0
     total = len(pending)
     t0 = time.time()
+    # Gleitendes Fenster: nur 'window' Futures gleichzeitig in flight, damit
+    # bei 100k+ Files der Speicher nicht voll laeuft. Vorher wurden alle
+    # Futures auf einmal submitted -> Future-Liste + Ergebnistupel (desc/tags)
+    # blieben bis Executor-Shutdown im RAM.
+    window = max(workers * 2, workers + 4)
+    pending_iter = iter(pending)
+    in_flight: set = set()
+    ep_done: dict[str, int] = {}
+    ep_err:  dict[str, int] = {}
+    i = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [
-            ex.submit(tag_one, root, fid, rel, kind, pool, syn)
-            for fid, rel, kind in pending
-        ]
-        ep_done: dict[str, int] = {}
-        ep_err:  dict[str, int] = {}
-        for i, fut in enumerate(as_completed(futs), 1):
-            fid, rel, desc, tags, err, ep_label = fut.result()
-            elapsed = time.time() - t0
-            rate = i / elapsed if elapsed else 0
-            eta = (total - i) / rate if rate > 0 else 0
-            rel_safe = _safe(rel)
-            if err:
-                errors += 1
-                ep_err[ep_label] = ep_err.get(ep_label, 0) + 1
-                print(f"[{i}/{total}] ERR  [{ep_label}] {rel_safe}  -> {err}", flush=True)
-            else:
-                done += 1
-                ep_done[ep_label] = ep_done.get(ep_label, 0) + 1
-                preview = ", ".join(tags[:6]) + ("..." if len(tags) > 6 else "")
-                print(f"[{i}/{total}] OK   [{ep_label}] {rel_safe}  | {preview}", flush=True)
-            if i % 25 == 0 or i == total:
-                pool_stats = pool.stats()
-                ep_summary = "  ".join(
-                    f"{s['label']}: ok={ep_done.get(s['label'],0)} "
-                    f"err={ep_err.get(s['label'],0)} "
-                    f"avg={s['avg_s']:.1f}s in_flight={s['in_flight']}"
-                    for s in pool_stats
-                )
-                print(f"  -- progress: done={done} err={errors} "
-                      f"rate={rate:.2f}/s eta={eta/60:.1f}min  | {ep_summary} --",
-                      flush=True)
+        # Fenster initial fuellen
+        for _ in range(window):
+            nxt = next(pending_iter, None)
+            if nxt is None:
+                break
+            fid, rel, kind = nxt
+            in_flight.add(ex.submit(tag_one, root, fid, rel, kind, pool, syn))
+        # Solange noch was unterwegs ist: auf erstes fertiges warten,
+        # verarbeiten, naechstes nachschieben.
+        while in_flight:
+            done_set, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+            for fut in done_set:
+                i += 1
+                fid, rel, desc, tags, err, ep_label = fut.result()
+                # fertiges Future explizit fallen lassen (Referenzen freigeben)
+                del fut
+                elapsed = time.time() - t0
+                rate = i / elapsed if elapsed else 0
+                eta = (total - i) / rate if rate > 0 else 0
+                rel_safe = _safe(rel)
+                if err:
+                    errors += 1
+                    ep_err[ep_label] = ep_err.get(ep_label, 0) + 1
+                    print(f"[{i}/{total}] ERR  [{ep_label}] {rel_safe}  -> {err}", flush=True)
+                else:
+                    done += 1
+                    ep_done[ep_label] = ep_done.get(ep_label, 0) + 1
+                    preview = ", ".join(tags[:6]) + ("..." if len(tags) > 6 else "")
+                    print(f"[{i}/{total}] OK   [{ep_label}] {rel_safe}  | {preview}", flush=True)
+                if i % 25 == 0 or i == total:
+                    pool_stats = pool.stats()
+                    ep_summary = "  ".join(
+                        f"{s['label']}: ok={ep_done.get(s['label'],0)} "
+                        f"err={ep_err.get(s['label'],0)} "
+                        f"avg={s['avg_s']:.1f}s in_flight={s['in_flight']}"
+                        for s in pool_stats
+                    )
+                    print(f"  -- progress: done={done} err={errors} "
+                          f"rate={rate:.2f}/s eta={eta/60:.1f}min  | {ep_summary} --",
+                          flush=True)
+                # naechstes Item nachschieben
+                nxt = next(pending_iter, None)
+                if nxt is not None:
+                    fid2, rel2, kind2 = nxt
+                    in_flight.add(ex.submit(tag_one, root, fid2, rel2, kind2, pool, syn))
     print(f"Finished. done={done} errors={errors} total_time={(time.time()-t0)/60:.1f}min")
 
 
