@@ -1524,6 +1524,29 @@ $("#s-normalize").addEventListener("click", async () => {
 });
 
 $("#s-start").addEventListener("click", async () => {
+  // Sicherheitsabfrage bei Re-Tag - das setzt ALLE 'done'-Files
+  // auf 'pending' und LLM-tagged sie neu (alte Tags werden ueberschrieben).
+  if ($("#s-retag").checked) {
+    const onlyTxt = $("#s-only").value
+        ? `nur ${$("#s-only").value === "image" ? "Bilder" : "Videos"}`
+        : "alle Files (Bilder + Videos)";
+    const limitTxt = $("#s-limit").value
+        ? `${$("#s-limit").value} pro Run`
+        : "OHNE Limit (kann sehr lange dauern)";
+    const ok = confirm(
+      "ACHTUNG: Re-Tag ist aktiv.\n\n" +
+      `Alle bereits getaggten Files (${onlyTxt}) werden auf 'pending' ` +
+      "zurueckgesetzt und vom LLM erneut getaggt.\n" +
+      `Limit: ${limitTxt}\n\n` +
+      "Die alten Tags + Beschreibungen werden dabei ueberschrieben.\n" +
+      "Manuelle Tags (rosa) bleiben erhalten.\n\n" +
+      "Wirklich starten?"
+    );
+    if (!ok) {
+      showMsg("Re-Tag abgebrochen.", "#888");
+      return;
+    }
+  }
   await saveSettings();
   showMsg("Pre-flight Check...", "#888");
   const r = await fetch("/api/tagger/start",
