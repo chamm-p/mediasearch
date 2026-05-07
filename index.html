@@ -486,6 +486,9 @@
     <button id="s-rescan" title="Filesystem neu durchscannen ohne LLM-Aufruf - findet neue, verschobene oder geloeschte Files">Re-Scan</button>
     <button id="s-start" class="primary">Tagging starten</button>
     <button id="s-stop" class="danger" disabled>Stoppen</button>
+    <button id="s-retag-sel" disabled
+        title="Setzt nur die in der Trefferliste markierten Files auf 'pending' und tagged sie neu. Manuelle Tags bleiben erhalten.">
+      Re-Tag Auswahl</button>
     <button id="s-normalize" title="Wendet synonyms.json auf existierende Tags an">
       Tags normalisieren</button>
     <button id="s-optimize" title="VACUUM + ANALYZE + WAL-Checkpoint - macht Suche schneller">
@@ -1044,6 +1047,9 @@ function updateActionState() {
   // LoRA-Export: nur mit Auswahl + min. ein Bild
   $("#lora-btn").disabled = selected.size === 0
     || ![...selected.values()].some(r => r.type === "image");
+  // Re-Tag Auswahl: nur mit Auswahl
+  const retagSelBtn = $("#s-retag-sel");
+  if (retagSelBtn) retagSelBtn.disabled = selected.size === 0;
   // Manuelle Tag-Leiste nur sichtbar wenn etwas selektiert
   const mtags = $("#mtags");
   if (selected.size > 0 && mtagsLoaded) {
@@ -1589,6 +1595,50 @@ $("#s-start").addEventListener("click", async () => {
     return;
   }
   showMsg("Tagger gestartet", "#8d8");
+  openDrawer("pane-log");
+  setTimeout(()=>showMsg("", "#888"), 4000);
+});
+
+$("#s-retag-sel").addEventListener("click", async () => {
+  if (!selected.size) {
+    showMsg("Keine Auswahl", "#f88");
+    return;
+  }
+  const ids = [...selected.keys()];
+  const types = [...selected.values()];
+  const nImg = types.filter(r => r.type === "image").length;
+  const nVid = types.filter(r => r.type === "video").length;
+  const partsTxt = [
+    nImg ? `${nImg} Bild${nImg === 1 ? "" : "er"}` : "",
+    nVid ? `${nVid} Video${nVid === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(" + ");
+  const ok = confirm(
+    `Re-Tag ${ids.length} ausgewaehlte Files (${partsTxt})?\n\n` +
+    "Die alten LLM-Tags + Beschreibungen werden ueberschrieben.\n" +
+    "Manuelle Tags (rosa) bleiben erhalten.\n\n" +
+    "Hinweis: nur ausgewaehlte Files werden neu getaggt - " +
+    "der Rest der Datenbank bleibt unangetastet."
+  );
+  if (!ok) return;
+  showMsg(`Pre-flight Check + Reset von ${ids.length} Files...`, "#888");
+  const r = await fetch("/api/retag-selected", {
+    method:  "POST",
+    headers: {"Content-Type":"application/json"},
+    body:    JSON.stringify({ids}),
+  });
+  if (!r.ok) {
+    let detail = "";
+    try {
+      const j = await r.json();
+      if (j.detail && typeof j.detail === "object") {
+        detail = j.detail.error || JSON.stringify(j.detail);
+      } else detail = j.detail || JSON.stringify(j);
+    } catch { detail = await r.text(); }
+    showMsg("Re-Tag abgebrochen: " + detail, "#f88");
+    return;
+  }
+  const j = await r.json();
+  showMsg(`Re-Tag gestartet (${j.reset || ids.length} Files)`, "#8d8");
   openDrawer("pane-log");
   setTimeout(()=>showMsg("", "#888"), 4000);
 });

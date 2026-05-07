@@ -586,6 +586,68 @@ def api_tagger_start(payload: dict | None = None) -> dict:
     return {"ok": True}
 
 
+@app.post("/api/retag-selected")
+def api_retag_selected(payload: dict | None = None) -> dict:
+    """Setzt die uebergebenen File-IDs auf status='pending' (tagged_at=0) zurueck
+    und startet anschliessend den Tagger. Manuelle Tags (manual_tags) bleiben
+    unangetastet - die werden beim Re-Tag mit den neuen LLM-Tags zusammengefuehrt.
+
+    Body: {"ids": [<int>, ...], "skip_check": bool?}
+    """
+    ids = (payload or {}).get("ids") or []
+    skip_check = bool((payload or {}).get("skip_check"))
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "keine ids uebergeben")
+    try:
+        ids_int = [int(x) for x in ids]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "ids muessen integer sein")
+    root = require_root()
+    conn = connect(root)
+    try:
+        ph = ",".join("?" * len(ids_int))
+        cur = conn.execute(
+            f"UPDATE files SET status='pending', tagged_at=0, started_at=0 "
+            f"WHERE id IN ({ph})",
+            ids_int,
+        )
+        conn.commit()
+        changed = cur.rowcount
+    finally:
+        conn.close()
+    logger.info("retag-selected: %d von %d ids auf pending zurueckgesetzt",
+                changed, len(ids_int))
+
+    # Tagger starten - nutzt dieselbe Pipeline wie /api/tagger/start.
+    # Wichtig: weder --retag noch --limit setzen, damit nur die vorhandenen
+    # pending-Files (also unsere gerade resetteten) verarbeitet werden.
+    s = load_settings()
+    s = {**s, "retag": False, "limit": None, "scan_only": False}
+    if not skip_check:
+        eps = configured_endpoints()
+        failed = []
+        for ep in eps:
+            chk = llm_preflight(ep["endpoint"], ep["model"], ep["api_key"])
+            if not chk.get("ok"):
+                failed.append({
+                    "label":    ep["label"],
+                    "endpoint": ep["endpoint"],
+                    "model":    ep["model"],
+                    "error":    _safe(chk.get("error") or "kein Detail"),
+                })
+        if failed:
+            msg = "; ".join(f"[{f['label']} {f['endpoint']}@{f['model']}] {f['error']}"
+                            for f in failed)
+            logger.warning("retag-selected: preflight fehlgeschlagen: %s", msg)
+            raise HTTPException(
+                status_code=422,
+                detail={"stage": "preflight", "error": msg, "failed": failed,
+                        "reset": changed},
+            )
+    tagger.start(s)
+    return {"ok": True, "reset": changed, "requested": len(ids_int)}
+
+
 @app.post("/api/rescan")
 def api_rescan() -> dict:
     """Nur Filesystem-Scan, kein LLM. Erkennt neue/geaenderte/umbenannte/
