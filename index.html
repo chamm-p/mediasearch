@@ -1348,7 +1348,45 @@ $("#s-dupes").addEventListener("click", () => {
 });
 $("#dupes-close").addEventListener("click", () => {
   $("#dupes-modal").style.display = "none";
+  stopDedupePoll();
 });
+// Live-Polling fuer dedupe-progress, solange das Modal offen ist.
+// Liest /api/tagger/log und extrahiert die letzte progress-Zeile.
+let _dedupePollTimer = null;
+function startDedupePoll() {
+  if (_dedupePollTimer) return;
+  _dedupePollTimer = setInterval(async () => {
+    try {
+      const r = await fetch("/api/tagger/log?since=0").then(r=>r.json());
+      const lines = r.lines || [];
+      // Nur weitermachen wenn aktueller Lauf ein dedupe ist
+      const isDedupe = (r.cmd || "").includes("dedupe.py");
+      if (!isDedupe) return;
+      // letzte Zeile mit "done=" oder "Fertig in" suchen
+      let last = "";
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (lines[i].includes("done=") || lines[i].includes("Fertig in")
+            || lines[i].includes("Dedupe-Hashing")) {
+          last = lines[i]; break;
+        }
+      }
+      const info = $("#dupes-info");
+      if (!r.running && last.includes("Fertig in")) {
+        info.textContent = last;
+        $("#dupes-hash").disabled = false;
+        stopDedupePoll();
+      } else if (r.running && last) {
+        info.textContent = "dedupe: " + last;
+      } else if (r.running) {
+        info.textContent = "dedupe laeuft (warte auf Output)...";
+      }
+    } catch {}
+  }, 1000);
+}
+function stopDedupePoll() {
+  if (_dedupePollTimer) { clearInterval(_dedupePollTimer); _dedupePollTimer = null; }
+}
+
 $("#dupes-hash").addEventListener("click", async () => {
   const all = $("#dupes-hash-all").checked;
   const only = $("#dupes-type").value;   // "" | "image" | "video"
@@ -1382,8 +1420,9 @@ $("#dupes-hash").addEventListener("click", async () => {
       btn.disabled = false;
       return;
     }
-    $("#dupes-info").textContent = "dedupe gestartet - Log siehe Drawer";
+    $("#dupes-info").textContent = "dedupe gestartet...";
     openDrawer("pane-log");
+    startDedupePoll();
   } catch (e) {
     $("#dupes-info").textContent = "Fehler: " + e;
   } finally {
