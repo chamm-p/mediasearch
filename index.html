@@ -581,6 +581,12 @@
                       color:var(--text);border:1px solid var(--line);
                       border-radius:4px"></label>
       <button id="dupes-run" class="primary">Suchen</button>
+      <button id="dupes-hash"
+              title="dedupe.py starten: berechnet Content-Hash (BLAKE2b) und Perceptual-Hash fuer alle Files denen sie fehlen. Nach dem Lauf kann 'Suchen' Doubletten finden.">
+        Hashes berechnen</button>
+      <label style="font-size:0.85rem"
+             title="Auch Files neu hashen, fuer die schon Hashes da sind (sonst nur fehlende)">
+        <input id="dupes-hash-all" type="checkbox"> alle neu</label>
       <span id="dupes-info" style="color:var(--text-dim);margin-left:auto"></span>
     </div>
     <!-- Scrollable Resultsarea -->
@@ -1342,6 +1348,48 @@ $("#s-dupes").addEventListener("click", () => {
 });
 $("#dupes-close").addEventListener("click", () => {
   $("#dupes-modal").style.display = "none";
+});
+$("#dupes-hash").addEventListener("click", async () => {
+  const all = $("#dupes-hash-all").checked;
+  const only = $("#dupes-type").value;   // "" | "image" | "video"
+  const onlyTxt = only === "image" ? "nur Bilder"
+                : only === "video" ? "nur Videos" : "Bilder + Videos";
+  const allTxt = all ? "ALLE Files (auch bereits gehashte)"
+                     : "nur Files mit fehlenden Hashes";
+  const ok = confirm(
+    `Hashes berechnen?\n\n` +
+    `Umfang: ${onlyTxt}\nMode: ${allTxt}\n\n` +
+    `Das laeuft als Subprozess und kann je nach Anzahl Files lange dauern. ` +
+    `Fortschritt im Log-Drawer sichtbar.`
+  );
+  if (!ok) return;
+  const btn = $("#dupes-hash");
+  btn.disabled = true;
+  $("#dupes-info").textContent = "starte dedupe...";
+  try {
+    const rsp = await fetch("/api/dedupe/start", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({all, only}),
+    });
+    if (!rsp.ok) {
+      let detail = "";
+      try {
+        const j = await rsp.json();
+        detail = (j.detail && (j.detail.error || j.detail)) || JSON.stringify(j);
+      } catch { detail = await rsp.text(); }
+      $("#dupes-info").textContent = "Fehler: " + detail;
+      btn.disabled = false;
+      return;
+    }
+    $("#dupes-info").textContent = "dedupe gestartet - Log siehe Drawer";
+    openDrawer("pane-log");
+  } catch (e) {
+    $("#dupes-info").textContent = "Fehler: " + e;
+  } finally {
+    // Button bleibt eine Weile gesperrt, der Status-Poll merkt das Ende.
+    setTimeout(() => { btn.disabled = false; }, 4000);
+  }
 });
 $("#dup-exec-clear").addEventListener("click", () => {
   _markedForDelete.clear();

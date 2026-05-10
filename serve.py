@@ -345,16 +345,38 @@ class Tagger:
             if settings.get("retag"):    cmd += ["--retag"]
             if settings.get("scan_only"):cmd += ["--scan-only"]
             if settings.get("only"):     cmd += ["--only",  settings["only"]]
-            self.log.clear()
-            self.log_total = 0
-            self._append_line(f"$ {' '.join(cmd)}")
-            self.cmd_str = " ".join(cmd)
-            self.proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, encoding="utf-8", errors="replace",
-            )
-            self.started_at = time.time()
-            threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
+            self._spawn_locked(cmd)
+
+    def start_dedupe(self, settings: dict[str, Any], opts: dict[str, Any]) -> None:
+        """Startet dedupe.py als Subprozess (nutzt denselben Log/Slot wie der
+        Tagger - beides schreibt in die DB, deshalb darf nur eines laufen).
+        opts: {'all': bool, 'only': 'image'|'video'|''}"""
+        with self.lock:
+            if self.is_running():
+                raise HTTPException(409, "tagger/dedupe laeuft bereits")
+            root = settings.get("root", "").strip()
+            if not root or not Path(root).expanduser().is_dir():
+                raise HTTPException(400, "ungueltiges Wurzelverzeichnis")
+            cmd = [sys.executable, "-u", str(HERE / "dedupe.py"),
+                   str(Path(root).expanduser())]
+            if opts.get("all"):  cmd += ["--all"]
+            only = opts.get("only")
+            if only in ("image", "video"): cmd += ["--only", only]
+            self._spawn_locked(cmd)
+
+    def _spawn_locked(self, cmd: list[str]) -> None:
+        """Caller haelt self.lock. Buffer leeren, Subprozess starten,
+        Reader-Thread anwerfen."""
+        self.log.clear()
+        self.log_total = 0
+        self._append_line(f"$ {' '.join(cmd)}")
+        self.cmd_str = " ".join(cmd)
+        self.proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, encoding="utf-8", errors="replace",
+        )
+        self.started_at = time.time()
+        threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
 
     def _append_line(self, line: str) -> None:
         # WICHTIG: log_total ist Lifetime-Counter, deque rotiert bei maxlen.
@@ -646,6 +668,18 @@ def api_retag_selected(payload: dict | None = None) -> dict:
             )
     tagger.start(s)
     return {"ok": True, "reset": changed, "requested": len(ids_int)}
+
+
+@app.post("/api/dedupe/start")
+def api_dedupe_start(payload: dict | None = None) -> dict:
+    """Startet dedupe.py (Content-Hash + Perceptual-Hash berechnen).
+    Body: {"all": bool?, "only": "image"|"video"|""}"""
+    p = payload or {}
+    s = load_settings()
+    opts = {"all": bool(p.get("all")), "only": p.get("only") or ""}
+    logger.info("dedupe/start angefordert root=%s opts=%s", s.get("root"), opts)
+    tagger.start_dedupe(s, opts)
+    return {"ok": True}
 
 
 @app.post("/api/rescan")
