@@ -180,17 +180,68 @@ def normalize_tags(tags: list[str], synonyms: dict[str, str] | None = None) -> l
     return out
 
 
+def _root_matches(slot: Path, root: Path) -> bool:
+    """Prueft ob in slot/root.txt der gegebene root steht. Toleriert
+    trailing slash, symlinks (resolved-form), '~'-expansion und whitespace."""
+    rt = slot / "root.txt"
+    if not rt.is_file():
+        return False
+    try:
+        stored = rt.read_text(encoding="utf-8").strip()
+    except Exception:
+        return False
+    if not stored:
+        return False
+    cur_p = Path(root)
+    sto_p = Path(stored).expanduser()
+    # 1. wortwoertliche Uebereinstimmung
+    if stored == str(root) or stored.rstrip("/") == str(root).rstrip("/"):
+        return True
+    # 2. expanduser-vergleich
+    if str(sto_p).rstrip("/") == str(cur_p.expanduser()).rstrip("/"):
+        return True
+    # 3. resolved-vergleich (kann fehlschlagen wenn pfade nicht existieren)
+    try:
+        if sto_p.resolve() == cur_p.resolve():
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def root_slot(root: Path) -> Path:
-    """Pro Wurzelverzeichnis ein eigener Datenordner unter <scripts>/data/."""
+    """Pro Wurzelverzeichnis ein eigener Datenordner unter <scripts>/data/.
+
+    Robust gegen folder-moves und pfad-aenderungen: wenn der hash-basierte
+    Slot leer ist, wird in allen 'data/*/'-Verzeichnissen nach einer
+    root.txt gesucht, die zum gegebenen root passt. So findet das System
+    seine DB auch wieder, wenn z.B. ein Symlink dazwischenkam oder der
+    Mount-Pfad sich aendert."""
     h = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
-    p = DATA_DIR / h
-    p.mkdir(parents=True, exist_ok=True)
-    (p / "thumbs").mkdir(exist_ok=True)
-    # menschenlesbarer Hinweis welcher Pfad das war
-    rt = p / "root.txt"
+    primary = DATA_DIR / h
+    # Schon vorhandener Slot mit passender root.txt -> direkt zurueck.
+    if primary.is_dir() and _root_matches(primary, root):
+        (primary / "thumbs").mkdir(exist_ok=True)
+        return primary
+    # Andernfalls: alle data/<x>/ slots scannen und root.txt vergleichen.
+    if DATA_DIR.is_dir():
+        for cand in sorted(DATA_DIR.iterdir()):
+            if not cand.is_dir() or cand == primary:
+                continue
+            if not (cand / DB_NAME).is_file():
+                continue
+            if _root_matches(cand, root):
+                # Match gefunden - diesen Slot weiterverwenden.
+                # WICHTIG: nicht umbenennen, damit nichts kaputt geht.
+                (cand / "thumbs").mkdir(exist_ok=True)
+                return cand
+    # Nichts passt -> neuen Slot anlegen (oder bestehenden leeren weiternutzen).
+    primary.mkdir(parents=True, exist_ok=True)
+    (primary / "thumbs").mkdir(exist_ok=True)
+    rt = primary / "root.txt"
     if not rt.exists():
         rt.write_text(str(root) + "\n", encoding="utf-8")
-    return p
+    return primary
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".tif", ".heic", ".heif", ".avif"}
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv", ".m4v", ".mpg", ".mpeg", ".ts", ".3gp"}
