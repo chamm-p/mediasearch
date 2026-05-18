@@ -136,6 +136,9 @@ Commands:
                     --port 8765
                   Read-Args: oeffnet ohne Root, falls in settings.json gesetzt
 
+  restart         serve.py hart killen + neu starten + Browser oeffnen
+                  Nuetzlich nach git pull oder wenn der Server haengt.
+
   tag <root>      LLM-Vision-Tagging via CLI (was die UI im Hintergrund macht)
                     --limit N               max Files in diesem Run
                     --workers N             parallele LLM-Calls
@@ -166,9 +169,14 @@ Commands:
 
 Beispiele:
   ./run.sh                                    # = ./run.sh ui
+  ./run.sh restart                            # serve.py hart neu starten
   ./run.sh tag /pfad/zu/medien --limit 500
   ./run.sh dedupe /pfad/zu/medien --only image
   ./run.sh thumbs /pfad/zu/medien --missing-only
+
+Helper:
+  ./change_root.sh /neuer/medien/pfad         # nach Medien-Move
+  ./setup_browser.sh [--chromium]             # portablen Browser laden
 
 Config:    config.toml (LLM, Server, Viewers, ...)
 DB:        data/<root-hash>/mediasearch.db (lokal, portabel)
@@ -176,8 +184,23 @@ Logs:      mediasearch.log
 EOF
 }
 
+cmd_restart() {
+    echo "stoppe laufende serve.py-prozesse..."
+    pkill -9 -f "serve\.py" || true
+    sleep 1
+    # port von eventuell haengengebliebener bindung loesen lassen
+    local port; port=$(read_port)
+    if command -v fuser >/dev/null; then
+        fuser -k -n tcp "$port" 2>/dev/null || true
+    fi
+    sleep 1
+    echo "starte neu..."
+    cmd_ui
+}
+
 case "${1:-ui}" in
     ui)             shift; cmd_ui "$@" ;;
+    restart)        shift; cmd_restart "$@" ;;
     serve)          shift; exec python serve.py  "$@" ;;
     tag)            shift; exec python tag.py    "$@" ;;
     thumbs)         shift; exec python thumbs.py "$@" ;;
