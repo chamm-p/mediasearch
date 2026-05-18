@@ -10,9 +10,32 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 
 # venv setup
+# Erkennt automatisch ein 'stale' venv: nach einem mv des
+# mediasearch-ordners zeigen die shebangs in .venv/bin/python auf den
+# alten pfad und schlagen mit 'No such file or directory' fehl. In dem
+# fall: .venv wegwerfen und neu bauen.
+venv_is_stale() {
+    [ -d .venv ] || return 1
+    # python im venv aufrufbar?
+    .venv/bin/python -c '' 2>/dev/null && return 1
+    return 0
+}
+
+if venv_is_stale; then
+    echo "venv ist stale (vermutlich nach mediasearch-folder-move) - baue neu auf..."
+    rm -rf .venv
+fi
+
 if [ ! -d .venv ]; then
     python3 -m venv .venv
-    .venv/bin/pip install -r requirements.txt
+    # Wenn vendor/ mit lokalen wheels vorhanden ist: offline installieren.
+    # Sonst: normal von PyPI ziehen (braucht Internet).
+    if [ -d vendor ] && compgen -G "vendor/*.whl" >/dev/null; then
+        echo "vendor/ gefunden - installiere offline aus lokalen wheels..."
+        .venv/bin/pip install --no-index --find-links vendor -r requirements.txt
+    else
+        .venv/bin/pip install -r requirements.txt
+    fi
 fi
 source .venv/bin/activate
 
@@ -210,6 +233,12 @@ Beispiele:
 Helper:
   ./change_root.sh /neuer/medien/pfad         # nach Medien-Move
   ./setup_browser.sh [--chromium]             # portablen Browser laden
+  ./vendor_wheels.sh                          # wheels cachen fuer offline-rebuild
+
+Hinweis venv:
+  Stale .venv (nach mediasearch-folder-move) wird automatisch erkannt
+  und neu gebaut. Wenn vendor/ wheels enthaelt, geschieht das offline -
+  sonst braucht es Internet fuer pip.
 
 Config:    config.toml (LLM, Server, Viewers, ...)
 DB:        data/<root-hash>/mediasearch.db (lokal, portabel)
