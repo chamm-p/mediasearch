@@ -81,6 +81,34 @@ launch_browser() {
 }
 
 cmd_ui() {
+    # Optionales erstes Argument: medien-root. Wenn angegeben und anders
+    # als in settings.json -> change_root.sh aufrufen, damit settings.json
+    # + data/<slot>/root.txt synchron bleiben. Beim naechsten mal reicht
+    # './run.sh ui'.
+    if [ $# -ge 1 ] && [ "${1:0:1}" != "-" ]; then
+        local newroot="$1"; shift
+        local curroot=""
+        if [ -f settings.json ]; then
+            curroot="$(python3 -c "import json; \
+                print(json.load(open('settings.json')).get('root','').strip())" \
+                2>/dev/null || echo "")"
+        fi
+        # Vergleich tolerant gegen trailing slash
+        if [ "${curroot%/}" != "${newroot%/}" ]; then
+            echo "medien-root aendert sich:"
+            echo "  alt: ${curroot:-<leer>}"
+            echo "  neu: $newroot"
+            if [ -x ./change_root.sh ]; then
+                ./change_root.sh "$newroot"
+            else
+                echo "FEHLER: ./change_root.sh nicht ausfuehrbar"
+                exit 1
+            fi
+        else
+            echo "medien-root unveraendert ($curroot) - kein change_root noetig."
+        fi
+    fi
+
     local port; port=$(read_port)
     local url="http://127.0.0.1:${port}"
     echo "==============================================="
@@ -123,8 +151,12 @@ mediasearch - LLM-Vision-Tagging und -Suche fuer lokale Foto/Video-Sammlung
 Aufruf:  ./run.sh <command> [opts]
 
 Commands:
-  ui              Web-UI starten (Default wenn kein Command angegeben)
+  ui [root]       Web-UI starten (Default wenn kein Command angegeben)
                   Startet serve.py + oeffnet Browser (portable falls vorhanden)
+                  Optional: medien-root als argument. Weicht er vom wert in
+                  settings.json ab -> change_root laeuft automatisch
+                  (settings.json + data/<slot>/root.txt werden umgebogen).
+                  Beim naechsten Mal reicht dann './run.sh ui'.
                   Browser-Pfad in dieser Reihenfolge:
                     browser/firefox/firefox
                     browser/*.AppImage
@@ -169,6 +201,7 @@ Commands:
 
 Beispiele:
   ./run.sh                                    # = ./run.sh ui
+  ./run.sh ui /neuer/medien/pfad              # einmaliger move + start
   ./run.sh restart                            # serve.py hart neu starten
   ./run.sh tag /pfad/zu/medien --limit 500
   ./run.sh dedupe /pfad/zu/medien --only image

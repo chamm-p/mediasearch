@@ -20,9 +20,14 @@ fi
 NEW="$1"
 
 if [ ! -d "$NEW" ]; then
-    echo "WARNUNG: '$NEW' existiert nicht oder ist kein verzeichnis."
-    read -r -p "trotzdem fortfahren? [j/N] " a
-    case "$a" in j|J|y|Y) ;; *) echo abgebrochen; exit 1 ;; esac
+    echo "FEHLER: '$NEW' existiert nicht oder ist kein verzeichnis." >&2
+    # CHANGE_ROOT_FORCE=1 erzwingt das setzen auch wenn pfad nicht existiert
+    # (z.B. wenn der mount noch nicht aktiv ist).
+    if [ "${CHANGE_ROOT_FORCE:-0}" != "1" ]; then
+        echo "(falls du das absichtlich willst: CHANGE_ROOT_FORCE=1 ./change_root.sh \"$NEW\")"
+        exit 1
+    fi
+    echo "(CHANGE_ROOT_FORCE=1 gesetzt - fahre trotzdem fort)"
 fi
 
 if [ ! -f settings.json ]; then
