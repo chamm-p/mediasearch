@@ -420,6 +420,81 @@ class Tagger:
 
 tagger = Tagger()
 
+# ---------- view tracking ----------
+
+def _invalidate_view_caches() -> None:
+    """Wirft sortierte ID-Listen weg, deren Reihenfolge/Inhalt von
+    Anzeige-Daten abhaengt (seen-Filter aktiv oder Nutzungsdauer-Sortierung)."""
+    for key in list(_SORTED_IDS_CACHE.keys()):
+        _, _, seen, order = key
+        if seen or order == "watched_desc":
+            _SORTED_IDS_CACHE.pop(key, None)
+
+
+def mark_viewed(root: Path, ids: list[int]) -> int:
+    """Vermerkt 'wurde gezeigt': viewed_at=jetzt, view_count+1."""
+    if not ids:
+        return 0
+    now = time.time()
+    conn = connect(root)
+    try:
+        ph = ",".join("?" * len(ids))
+        cur = conn.execute(
+            f"UPDATE files SET viewed_at=?, view_count=view_count+1 "
+            f"WHERE id IN ({ph})", [now, *ids])
+        conn.commit()
+        changed = cur.rowcount
+    finally:
+        conn.close()
+    _invalidate_view_caches()
+    return changed
+
+
+def add_watch_time(root: Path, file_id: int, seconds: float) -> None:
+    """Addiert Nutzungsdauer (Videos: mpv-Start bis Esc) auf watch_seconds."""
+    conn = connect(root)
+    try:
+        conn.execute(
+            "UPDATE files SET watch_seconds=watch_seconds+? WHERE id=?",
+            (seconds, file_id))
+        conn.commit()
+    finally:
+        conn.close()
+    _invalidate_view_caches()
+
+
+def watch_video_proc(root: Path, file_id: int, proc: subprocess.Popen) -> None:
+    """Begleitet einen Player-Prozess (mpv) im Hintergrund und schreibt
+    nach dessen Ende die Laufzeit als Nutzungsdauer in die DB."""
+    started = time.time()
+    def _waiter() -> None:
+        try:
+            proc.wait()
+        except Exception:
+            pass
+        elapsed = time.time() - started
+        # Sofort beendete Prozesse (Launcher-Stil, Fehlstart) nicht werten
+        if elapsed < 1.0:
+            return
+        try:
+            add_watch_time(root, file_id, elapsed)
+            logger.info("watch-time: id=%d +%.1fs", file_id, elapsed)
+        except Exception as e:
+            logger.error("watch-time update failed (id=%d): %s", file_id, e)
+    threading.Thread(target=_waiter, daemon=True).start()
+
+
+@app.post("/api/viewed")
+def api_viewed(payload: dict) -> dict:
+    """Vermerkt fuer die uebergebenen IDs, dass sie angezeigt wurden
+    (Slideshow ruft das pro gezeigtem Bild auf). payload: {ids: [int]}"""
+    ids = [int(x) for x in (payload.get("ids") or [])]
+    if not ids:
+        raise HTTPException(400, "ids leer")
+    root = require_root()
+    changed = mark_viewed(root, ids)
+    return {"ok": True, "changed": changed}
+
 # ---------- API ----------
 
 @app.get("/", response_class=HTMLResponse)
@@ -717,10 +792,11 @@ _SORTED_IDS_CACHE: dict = {}     # key=(q, type, order) -> {t, ids}
 _SORTED_IDS_TTL = 60.0           # s
 
 def _get_sorted_ids(conn, q: str, type_filter: str | None,
-                    order: str) -> list[int]:
+                    order: str, seen: str = "") -> list[int]:
     """Liefert die ID-Liste in der gewaehlten Reihenfolge, gecached.
-    Nur fuer deterministische Sortierungen sinnvoll (path/newest/oldest)."""
-    key = (q.strip(), type_filter or "", order)
+    Nur fuer deterministische Sortierungen sinnvoll (path/newest/oldest).
+    seen: '' (alle) | 'unseen' (noch nie gezeigt) | 'seen' (schon gezeigt)."""
+    key = (q.strip(), type_filter or "", seen or "", order)
     now = time.time()
     cached = _SORTED_IDS_CACHE.get(key)
     if cached and (now - cached["t"]) < _SORTED_IDS_TTL:
@@ -729,6 +805,10 @@ def _get_sorted_ids(conn, q: str, type_filter: str | None,
     params: list = []
     if type_filter:
         where.append("f.type=?"); params.append(type_filter)
+    if seen == "unseen":
+        where.append("f.viewed_at=0")
+    elif seen == "seen":
+        where.append("f.viewed_at>0")
     if order == "path":
         # sort_key ist vorberechnet + indexiert -> SQL-Order ist viel schneller
         # als Python-Sort. Falls sort_key NULL (Migration nicht durch),
@@ -747,6 +827,7 @@ def _get_sorted_ids(conn, q: str, type_filter: str | None,
     else:
         order_map = {"newest": "f.mtime DESC", "oldest": "f.mtime ASC",
                      "size_desc": "f.size DESC", "size_asc": "f.size ASC",
+                     "watched_desc": "f.watch_seconds DESC, f.viewed_at DESC",
                      "relevance": "f.id DESC"}
         clause = order_map.get(order, "f.id DESC")
         if q.strip():
@@ -868,7 +949,7 @@ def fts_query(q: str) -> str:
 @app.get("/api/search")
 def api_search(q: str = "", type: Optional[str] = None,
                limit: int = 200, offset: int = 0,
-               order: str = "relevance") -> dict:
+               order: str = "relevance", seen: str = "") -> dict:
     root = current_root()
     if root is None:
         return {"results": [], "no_root": True}
@@ -877,12 +958,14 @@ def api_search(q: str = "", type: Optional[str] = None,
     conn = connect(root)
     try:
         type_filter = type if type in ("image", "video") else None
+        seen = seen if seen in ("unseen", "seen") else ""
 
         # Schneller Pfad fuer deterministische Sortierungen: gecachte
         # ID-Liste nutzen, slicen, dann metadata fuer 80 Files holen
         # (statt 280k mit Custom-Collation zu sortieren).
-        if order in ("path", "newest", "oldest", "size_desc", "size_asc"):
-            ids = _get_sorted_ids(conn, q, type_filter, order)
+        if order in ("path", "newest", "oldest", "size_desc", "size_asc",
+                     "watched_desc"):
+            ids = _get_sorted_ids(conn, q, type_filter, order, seen)
             total = len(ids)
             page_ids = ids[offset:offset + limit]
             if not page_ids:
@@ -890,7 +973,8 @@ def api_search(q: str = "", type: Optional[str] = None,
                         "results": []}
             ph = ",".join("?" * len(page_ids))
             rows_raw = conn.execute(
-                "SELECT id, rel_path, type, description, tags, manual_tags "
+                "SELECT id, rel_path, type, description, tags, manual_tags, "
+                "       viewed_at, view_count, watch_seconds "
                 f"FROM files WHERE id IN ({ph})", page_ids).fetchall()
             by_id = {r["id"]: r for r in rows_raw}
             def _split(s): return [_safe(t.strip()) for t in (s or "").split(",") if t.strip()]
@@ -905,6 +989,9 @@ def api_search(q: str = "", type: Optional[str] = None,
                     "description": _safe(r["description"]),
                     "tags": _split(r["tags"]),
                     "manual_tags": _split(r["manual_tags"]),
+                    "viewed_at": r["viewed_at"] or 0,
+                    "view_count": r["view_count"] or 0,
+                    "watch_seconds": r["watch_seconds"] or 0,
                 })
             return {"total": total, "offset": offset, "limit": limit,
                     "results": results}
@@ -913,6 +1000,10 @@ def api_search(q: str = "", type: Optional[str] = None,
         where = ["f.status='done'"]
         if type_filter:
             where.append("f.type=?"); params.append(type_filter)
+        if seen == "unseen":
+            where.append("f.viewed_at=0")
+        elif seen == "seen":
+            where.append("f.viewed_at>0")
         order_map = {
             "random":    "RANDOM()",
             "relevance": None,   # nur bei Suche; sonst f.id DESC
@@ -927,6 +1018,7 @@ def api_search(q: str = "", type: Optional[str] = None,
                          "JOIN files_fts ON files_fts.rowid=f.id WHERE " + base_where)
             sql = ("SELECT f.id, f.rel_path, f.type, f.description, "
                    "       f.tags, f.manual_tags, "
+                   "       f.viewed_at, f.view_count, f.watch_seconds, "
                    "       bm25(files_fts) AS rank "
                    "FROM files f JOIN files_fts ON files_fts.rowid=f.id "
                    "WHERE " + base_where +
@@ -939,6 +1031,7 @@ def api_search(q: str = "", type: Optional[str] = None,
             count_sql = "SELECT COUNT(*) c FROM files f WHERE " + base_where
             sql = ("SELECT f.id, f.rel_path, f.type, f.description, "
                    "       f.tags, f.manual_tags, "
+                   "       f.viewed_at, f.view_count, f.watch_seconds, "
                    "       0 AS rank FROM files f WHERE " + base_where +
                    " ORDER BY " + (order_clause or "f.id DESC") +
                    " LIMIT ? OFFSET ?")
@@ -951,7 +1044,10 @@ def api_search(q: str = "", type: Optional[str] = None,
             {"id": r["id"], "path": _safe(r["rel_path"]), "type": r["type"],
              "description": _safe(r["description"]),
              "tags": _split(r["tags"]),
-             "manual_tags": _split(r["manual_tags"])}
+             "manual_tags": _split(r["manual_tags"]),
+             "viewed_at": r["viewed_at"] or 0,
+             "view_count": r["view_count"] or 0,
+             "watch_seconds": r["watch_seconds"] or 0}
             for r in rows]}
     finally:
         conn.close()
@@ -959,7 +1055,7 @@ def api_search(q: str = "", type: Optional[str] = None,
 @app.get("/api/search/locate")
 def api_search_locate(file_id: int, q: str = "",
                        type: Optional[str] = None,
-                       order: str = "relevance",
+                       order: str = "relevance", seen: str = "",
                        max_scan: int = 200000) -> dict:
     """Findet die Position (offset) einer Datei in der aktuellen
     Suchergebnis-Reihenfolge. -1 wenn nicht enthalten."""
@@ -971,9 +1067,10 @@ def api_search_locate(file_id: int, q: str = "",
         # bei random ist locate sinnlos (jede Anfrage andere Reihenfolge)
         return {"offset": -1, "note": "random order has no fixed offsets"}
     type_filter = type if type in ("image", "video") else None
+    seen = seen if seen in ("unseen", "seen") else ""
     conn = connect(root)
     try:
-        ids = _get_sorted_ids(conn, q, type_filter, order)
+        ids = _get_sorted_ids(conn, q, type_filter, order, seen)
         # Schnelle Suche per Index-Lookup statt linearer Iteration
         for i, row_id in enumerate(ids):
             if row_id == file_id:
@@ -985,7 +1082,7 @@ def api_search_locate(file_id: int, q: str = "",
 
 @app.get("/api/search/ids")
 def api_search_ids(q: str = "", type: Optional[str] = None,
-                   order: str = "relevance",
+                   order: str = "relevance", seen: str = "",
                    max_results: int = 1000000) -> dict:
     """Liefert ALLE matchenden Items (leichtgewichtig: id+path+type).
     Fuer Slideshow ueber die ganze Treffermenge."""
@@ -1002,12 +1099,17 @@ def api_search_ids(q: str = "", type: Optional[str] = None,
         where = ["f.status='done'"]
         if type in ("image","video"):
             where.append("f.type=?"); params.append(type)
+        if seen == "unseen":
+            where.append("f.viewed_at=0")
+        elif seen == "seen":
+            where.append("f.viewed_at>0")
         order_map = {
             "newest":    "f.mtime DESC",
             "oldest":    "f.mtime ASC",
             "path":      "f.rel_path COLLATE NATSORT ASC",
             "size_desc": "f.size DESC",
             "size_asc":  "f.size ASC",
+            "watched_desc": "f.watch_seconds DESC, f.viewed_at DESC",
             "random":    "RANDOM()",
             "relevance": None,
         }
@@ -1083,7 +1185,8 @@ def api_meta(file_id: int) -> dict:
     conn = connect(root)
     try:
         r = conn.execute(
-            "SELECT id, rel_path, type, description, tags, manual_tags "
+            "SELECT id, rel_path, type, description, tags, manual_tags, "
+            "       viewed_at, view_count, watch_seconds "
             "FROM files WHERE id=?", (file_id,)
         ).fetchone()
     finally:
@@ -1098,6 +1201,9 @@ def api_meta(file_id: int) -> dict:
         "description": _safe(r["description"]),
         "tags": _split(r["tags"]),
         "manual_tags": _split(r["manual_tags"]),
+        "viewed_at": r["viewed_at"] or 0,
+        "view_count": r["view_count"] or 0,
+        "watch_seconds": r["watch_seconds"] or 0,
     }
 
 
@@ -1142,12 +1248,18 @@ def api_open(payload: dict) -> dict:
     else:
         cmd = ["xdg-open", str(p)]
     try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
     except FileNotFoundError as e:
         raise HTTPException(500, f"viewer nicht gefunden: {cmd[0]} ({e})")
     except Exception as e:
         raise HTTPException(500, f"open failed: {e}")
+    # Anzeige vermerken; bei Videos zusaetzlich Nutzungsdauer =
+    # Player-Laufzeit (mpv blockt bis Esc) mitschreiben.
+    root = require_root()
+    mark_viewed(root, [fid])
+    if ftype == "video":
+        watch_video_proc(root, fid, proc)
     return {"ok": True}
 
 @app.get("/api/duplicates")
@@ -1413,10 +1525,12 @@ def api_play(payload: dict) -> dict:
     ids = payload.get("ids") or []
     if not ids: raise HTTPException(400, "no ids")
     paths: list[str] = []
+    resolved_ids: list[int] = []
     for fid in ids:
         try:
             p, _ = _abs_for(int(fid))
             paths.append(str(p))
+            resolved_ids.append(int(fid))
         except HTTPException:
             continue
     if not paths: raise HTTPException(404, "none of the ids resolved")
@@ -1436,9 +1550,16 @@ def api_play(payload: dict) -> dict:
         random.shuffle(paths)
         cmd = ["mpv", *mpv_extra, "--shuffle", "--loop-playlist=inf", *paths]
     try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         raise HTTPException(500, "mpv not installed")
+    # Anzeige vermerken. Nutzungsdauer (mpv-Start bis Esc) nur bei genau
+    # EINEM Video messbar - bei Playlist ist die Zeit nicht zuordenbar.
+    root = require_root()
+    mark_viewed(root, resolved_ids)
+    if len(resolved_ids) == 1:
+        watch_video_proc(root, resolved_ids[0], proc)
     return {"ok": True, "count": len(paths)}
 
 # ---------- main ----------

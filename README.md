@@ -13,6 +13,11 @@ Vision-Endpoint deiner Wahl (vLLM, LM Studio, Ollama, etc.).
 - **Slideshow** im Browser (Random/Serial Toggle, Rotation, Vollbild,
   Tag-Buttons, Tastatur-Bedienung)
 - **Random-Play** ueber `mpv` fuer gemischte Bilder/Videos
+- **Anzeige-Tracking** - jedes gezeigte Bild/Video wird vermerkt;
+  Filter "Nur ungezeigte" / "Nur gezeigte" in der Trefferliste
+- **Nutzungsdauer-Ranking** - bei Videos wird die Abspielzeit
+  (mpv-Start bis Esc) aufsummiert; Sortierung "Nutzungsdauer (laengste
+  zuerst)" zeigt die meistgesehenen Videos zuoberst
 - **LoRA-Export** ausgewaehlter Bilder mit Tag-Sidecars
 - **Inkrementell** - Re-Scan erkennt neue / verschobene / geloeschte Files,
   Tags ueberleben Renames

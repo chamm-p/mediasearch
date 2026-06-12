@@ -371,7 +371,10 @@ CREATE TABLE IF NOT EXISTS files (
     started_at   REAL DEFAULT 0,
     content_hash TEXT DEFAULT '',
     phash_int    INTEGER,
-    sort_key     TEXT
+    sort_key     TEXT,
+    viewed_at     REAL DEFAULT 0,
+    view_count    INTEGER DEFAULT 0,
+    watch_seconds REAL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
 CREATE INDEX IF NOT EXISTS idx_files_type ON files(type);
@@ -421,12 +424,22 @@ def init_db(root: Path, force: bool = False) -> None:
             conn.execute("ALTER TABLE files ADD COLUMN phash_int INTEGER")
         if "sort_key" not in cols:
             conn.execute("ALTER TABLE files ADD COLUMN sort_key TEXT")
+        # Migration auf Anzeige-Tracking (gezeigt-Vermerk + Nutzungsdauer).
+        # NICHT seen_at verwenden - das ist der Scanner-Zeitstempel!
+        if "viewed_at" not in cols:
+            conn.execute("ALTER TABLE files ADD COLUMN viewed_at REAL DEFAULT 0")
+        if "view_count" not in cols:
+            conn.execute("ALTER TABLE files ADD COLUMN view_count INTEGER DEFAULT 0")
+        if "watch_seconds" not in cols:
+            conn.execute("ALTER TABLE files ADD COLUMN watch_seconds REAL DEFAULT 0")
         try:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_chash ON files(content_hash)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_phash ON files(phash_int)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_sortkey ON files(sort_key)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_mtime ON files(mtime)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_files_size ON files(size)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_viewed ON files(viewed_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_files_watch ON files(watch_seconds)")
         except Exception:
             pass
         # Einmal-Befuellung von sort_key fuer existierende Rows (laeuft nur

@@ -277,6 +277,15 @@
   .card .badge { position: absolute; top: 6px; left: 6px; padding: 2px 8px;
                  background: rgba(0,0,0,.75); border-radius: 3px; font-size: 0.8rem; }
   .card .badge.video { background: rgba(220,40,40,.9); }
+  /* "noch nie gezeigt"-Markierung oben rechts */
+  .card .badge-unseen { position: absolute; top: 6px; right: 6px; padding: 2px 7px;
+                 background: rgba(40,180,90,.9); color: #032; border-radius: 3px;
+                 font-size: 0.72rem; font-weight: 600; }
+  /* Nutzungsdauer-Badge (Videos mit Watch-Time) unten rechts ueber dem Pfad */
+  .card .badge-watch { position: absolute; right: 6px; bottom: 26px; padding: 1px 7px;
+                 background: rgba(0,0,0,.75); color: var(--text-dim);
+                 border-radius: 3px; font-size: 0.72rem;
+                 font-family: ui-monospace, "SF Mono", Menlo, monospace; }
   /* Meta = nur ein dezenter Pfad-Strip am unteren Rand der Karte.
      Description und Tags erscheinen ausschliesslich im Hover-Popup. */
   .card .meta { padding: 3px 8px; font-size: 0.72rem; flex: 0 0 auto;
@@ -410,12 +419,18 @@
       <option value="image">Bilder</option>
       <option value="video">Videos</option>
     </select>
+    <select id="seen" title="Nach Anzeige-Status filtern (gezeigt = in Slideshow oder Player angezeigt)">
+      <option value="">Gezeigt+Neu</option>
+      <option value="unseen">Nur ungezeigte</option>
+      <option value="seen">Nur gezeigte</option>
+    </select>
     <select id="order" title="Sortierung der Trefferliste">
       <option value="relevance">Relevanz</option>
       <option value="newest">Neueste zuerst</option>
       <option value="oldest">Aelteste zuerst</option>
       <option value="path" selected>Pfad / Name</option>
       <option value="size_desc">Groesse (gross zuerst)</option>
+      <option value="watched_desc">Nutzungsdauer (laengste zuerst)</option>
       <option value="random">Random</option>
     </select>
     <span class="q-wrap" id="q-wrap">
@@ -716,8 +731,8 @@ const _pageCache = new Map();   // offset -> {results, total}
 let _pinnedOffsets = new Set();
 let _cacheSig = "";
 function _querySig() {
-  return [$("#q").value, $("#type").value, $("#order").value,
-          $("#limit-q").value].join("|");
+  return [$("#q").value, $("#type").value, $("#seen").value,
+          $("#order").value, $("#limit-q").value].join("|");
 }
 function _cachePut(offset, results, total) {
   _pageCache.set(offset, {results: results.slice(), total});
@@ -762,7 +777,7 @@ async function search(opts={}) {
   }
 
   const params = new URLSearchParams({
-    q: $("#q").value, type: $("#type").value,
+    q: $("#q").value, type: $("#type").value, seen: $("#seen").value,
     order: $("#order").value, limit: pageSize, offset: currentOffset,
   });
   const r = await fetch("/api/search?" + params).then(r=>r.json());
@@ -791,6 +806,7 @@ async function _autoLocateHighlighted() {
     file_id: String(id),
     q:    $("#q").value,
     type: $("#type").value,
+    seen: $("#seen").value,
     order: $("#order").value,
   });
   try {
@@ -822,7 +838,7 @@ async function _prefetchPage(offset) {
   if (offset < 0) return;
   if (totalHits > 0 && offset >= totalHits) return;
   const params = new URLSearchParams({
-    q: $("#q").value, type: $("#type").value,
+    q: $("#q").value, type: $("#type").value, seen: $("#seen").value,
     order: $("#order").value, limit: pageSize, offset,
   });
   try {
@@ -930,6 +946,28 @@ window.addEventListener("resize", () => {
   }, 200);
 });
 
+// Sekunden -> "1h 12m" / "5m 32s" / "12s"
+function fmtDur(s) {
+  s = Math.round(s || 0);
+  if (s >= 3600) return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+  if (s >= 60)   return `${Math.floor(s/60)}m ${s%60}s`;
+  return `${s}s`;
+}
+// Unix-Sekunden -> lokales Datum/Zeit kurz
+function fmtWhen(t) {
+  if (!t) return "";
+  return new Date(t * 1000).toLocaleString(undefined,
+    {day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit"});
+}
+function viewedLine(it) {
+  if (!it.view_count) return "noch nie gezeigt";
+  let s = `${it.view_count}x gezeigt, zuletzt ${fmtWhen(it.viewed_at)}`;
+  if (it.type === "video" && it.watch_seconds > 0) {
+    s += ` - Nutzungsdauer ${fmtDur(it.watch_seconds)}`;
+  }
+  return s;
+}
+
 function showCardPop(card, it) {
   const pop = $("#card-pop");
   const allTags  = (it.tags || []).join(", ");
@@ -938,7 +976,8 @@ function showCardPop(card, it) {
     <div>${escapeHtml(it.description || "(keine Beschreibung)")}</div>
     <div class="full-tags">${escapeHtml(allTags || "(keine auto-tags)")}</div>
     ${allMTags ? `<div class="full-mtags">★ ${escapeHtml(allMTags)}</div>` : ""}
-    <div class="full-path">${escapeHtml(it.path)}</div>`;
+    <div class="full-path">${escapeHtml(it.path)}</div>
+    <div class="full-path">👁 ${escapeHtml(viewedLine(it))}</div>`;
   const r = card.getBoundingClientRect();
   const popMaxW = Math.max(r.width, 280);
   // unterhalb der Karte; falls nicht genug Platz, oberhalb
@@ -977,6 +1016,9 @@ function render() {
         <img loading="lazy" src="/thumb/${it.id}" onerror="this.style.display='none'">
       </div>
       <span class="badge ${it.type}">${it.type}</span>
+      ${!it.view_count ? `<span class="badge-unseen" title="noch nie gezeigt">NEU</span>` : ""}
+      ${(it.type === "video" && it.watch_seconds > 0)
+        ? `<span class="badge-watch" title="Nutzungsdauer gesamt">${fmtDur(it.watch_seconds)}</span>` : ""}
       <div class="meta">
         <div class="path" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</div>
       </div>`;
@@ -1165,6 +1207,7 @@ $("#q-clear").addEventListener("click", () => {
   $("#q").value = ""; updateQClear(); search(); $("#q").blur();
 });
 $("#type").addEventListener("change", () => { saveUiState(); search(); $("#type").blur(); });
+$("#seen").addEventListener("change", () => { saveUiState(); search(); $("#seen").blur(); });
 $("#order").addEventListener("change", () => { saveUiState(); search(); $("#order").blur(); });
 
 // ---- UI-State persistieren (Browser-LocalStorage) ----
@@ -1174,6 +1217,7 @@ function saveUiState() {
     localStorage.setItem(UI_STATE_KEY, JSON.stringify({
       order: $("#order").value,
       type:  $("#type").value,
+      seen:  $("#seen").value,
     }));
   } catch {}
 }
@@ -1188,6 +1232,10 @@ function loadUiState() {
     if (s.type !== undefined) {
       const opt = [...$("#type").options].find(o => o.value === s.type);
       if (opt) $("#type").value = s.type;
+    }
+    if (s.seen !== undefined) {
+      const opt = [...$("#seen").options].find(o => o.value === s.seen);
+      if (opt) $("#seen").value = s.seen;
     }
   } catch {}
 }
@@ -1859,6 +1907,7 @@ async function fetchAllImageHits() {
   const params = new URLSearchParams({
     q: $("#q").value,
     type: "image",
+    seen: $("#seen").value,
     order: "path",
   });
   const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
@@ -1871,6 +1920,7 @@ async function fetchAllVideoHits() {
   const params = new URLSearchParams({
     q: $("#q").value,
     type: "video",
+    seen: $("#seen").value,
     order: "path",
   });
   const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
@@ -1908,6 +1958,7 @@ function startSlideshowAt(item) {
 }
 
 function _initSlideshow(initialImgs, clickedItem, allImgsPromise) {
+  _viewedThisShow.clear();
   slidePlaylist = (initialImgs || []).slice();
   slideMode = "serial";
   slideOrder = slidePlaylist.slice();
@@ -2156,6 +2207,7 @@ async function updateSlideText() {
     <div>${escapeHtml(m.description || "(keine Beschreibung)")}</div>
     ${tagsLine ? `<div class="st-tags">${escapeHtml(tagsLine)}</div>` : ""}
     ${mtagsLine ? `<div class="st-mtags">★ ${escapeHtml(mtagsLine)}</div>` : ""}
+    <div class="st-tags">👁 ${escapeHtml(viewedLine(m))}</div>
   `;
 }
 
@@ -2168,12 +2220,25 @@ function applySlideRot() {
   img.style.transform = `rotate(${slideRot}deg)`;
 }
 
+// "Gezeigt"-Vermerk: jedes in der Slideshow angezeigte Bild wird gemeldet.
+// Pro Slideshow-Sitzung nur einmal je Bild (vor/zurueck blaettern zaehlt
+// nicht mehrfach) - fire-and-forget, blockiert die Anzeige nicht.
+const _viewedThisShow = new Set();
+function markSlideViewed(it) {
+  if (!it || _viewedThisShow.has(it.id)) return;
+  _viewedThisShow.add(it.id);
+  fetch("/api/viewed", {method:"POST", headers:{"Content-Type":"application/json"},
+                        body: JSON.stringify({ids: [it.id]})})
+    .catch(e => console.warn("viewed-Vermerk fehlgeschlagen:", e));
+}
+
 function showSlide() {
   const it = slideOrder[slideIdx];
   if (!it) {
     $("#slide-info").textContent = "(lade...)";
     return;
   }
+  markSlideViewed(it);
   slideRot = 0;          // beim Bildwechsel Rotation zuruecksetzen
   applySlideRot();
   // src nur setzen wenn sich das Bild geaendert hat (vermeidet Reload bei Expand)
@@ -2275,6 +2340,15 @@ async function closeSlideshow() {
   $("#slide-text").classList.remove("active");
   $("#slide-loading").classList.remove("active");
   slideTextOn = false;
+  // Bei aktivem "nur ungezeigte"-Filter sind die gerade gezeigten Bilder
+  // aus der Treffermenge gefallen - Cache verwerfen und frisch laden
+  // (ein Ruecksprung zum letzten Bild ist dann sinnlos).
+  if ($("#seen").value === "unseen" && _viewedThisShow.size) {
+    _pageCache.clear();
+    _pinnedOffsets.clear();
+    await search({offset: 0});
+    return;
+  }
   try {
     if (lastId == null) return;
     console.log("[closeSlideshow] lastId =", lastId);
@@ -2321,6 +2395,7 @@ async function closeSlideshow() {
       file_id: String(lastId),
       q:    $("#q").value,
       type: $("#type").value,
+      seen: $("#seen").value,
       order: $("#order").value,
     });
     let offset = -1;
