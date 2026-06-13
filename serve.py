@@ -1332,6 +1332,18 @@ def serve_file(file_id: int):
     p, _ = _abs_for(file_id)
     return FileResponse(p)
 
+def _mpv_extra_args() -> list[str]:
+    """Gemeinsame mpv-Zusatzargs: unser Lua-Script (Rotation + WB-Hotkeys)
+    plus der Pfad zu den WB-GPU-Shadern via script-opts (Taste w)."""
+    args: list[str] = []
+    mpv_dir = (HERE / "mpv").resolve()
+    rotate_script = mpv_dir / "rotate.lua"
+    if rotate_script.is_file():
+        args.append(f"--script={rotate_script}")
+        args.append(f"--script-opts=wbdir={mpv_dir}")
+    return args
+
+
 @app.post("/api/open")
 def api_open(payload: dict) -> dict:
     fid = int(payload.get("id", 0))
@@ -1342,20 +1354,15 @@ def api_open(payload: dict) -> dict:
         import shlex
         cmd = shlex.split(cmd_str)
         # Wenn der Viewer mpv ist (oder mit mpv anfaengt) und unser
-        # Rotation-Script existiert: mit reinhaengen, damit b/n auch
+        # Rotation-Script existiert: mit reinhaengen, damit b/n/w auch
         # bei einzelnem Video-Klick funktionieren.
-        if cmd and cmd[0].endswith("mpv"):
-            rotate_script = (HERE / "mpv" / "rotate.lua").resolve()
-            if rotate_script.is_file() and not any(
-                    a.startswith("--script=") for a in cmd):
-                cmd.append(f"--script={rotate_script}")
+        if cmd and cmd[0].endswith("mpv") and not any(
+                a.startswith("--script=") for a in cmd):
+            cmd += _mpv_extra_args()
         cmd.append(str(p))
     elif ftype == "video":
         # Video ohne expliziten Viewer: nimm mpv mit Fullscreen + Rotate-Script
-        cmd = ["mpv", "--fs"]
-        rotate_script = (HERE / "mpv" / "rotate.lua").resolve()
-        if rotate_script.is_file():
-            cmd.append(f"--script={rotate_script}")
+        cmd = ["mpv", "--fs", *_mpv_extra_args()]
         cmd.append(str(p))
     else:
         cmd = ["xdg-open", str(p)]
@@ -1648,13 +1655,7 @@ def api_play(payload: dict) -> dict:
     # Eines = endlos loopen bis Esc; mehrere = playlist mit shuffle+loop
     # --fs = fullscreen
     # --script = Lua-Script mit unseren Hotkeys (b/n/B fuer Video-Rotation)
-    mpv_extra: list[str] = ["--fs"]
-    rotate_script = (HERE / "mpv" / "rotate.lua").resolve()
-    if rotate_script.is_file():
-        mpv_extra.append(f"--script={rotate_script}")
-        logger.info("mpv script: %s", rotate_script)
-    else:
-        logger.warning("mpv script NICHT gefunden: %s", rotate_script)
+    mpv_extra: list[str] = ["--fs", *_mpv_extra_args()]
     single = len(paths) == 1
     if single:
         cmd = ["mpv", *mpv_extra, "--loop-file=inf", paths[0]]

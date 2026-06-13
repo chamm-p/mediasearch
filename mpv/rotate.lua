@@ -20,29 +20,37 @@ mp.add_forced_key_binding("B", "rotate-reset", function()
 end)
 
 -- ---- Weissabgleich gegen Gelbstich (Taste w) ----
--- Umschaltbar: aus -> auto -> aus.
---   auto = greyedge mit difford=0 (Grey-World): schaetzt das Falschlicht
---          nur ueber den Kanal-Mittelwert statt ueber Bildgradienten -
---          um Groessenordnungen billiger als difford=1, daher fluessig,
---          aber bei einfarbigem Falschlicht praktisch gleich gut.
--- Eigenes Filter-Label '@wb', damit die Rotation (Property, kein Filter)
--- unberuehrt bleibt. Bei fehlendem Filter zeigt mpv nur eine OSD-Meldung.
+-- Feste Korrektur auf der GPU (glsl-shader) statt CPU-Filter: laeuft auch bei
+-- 4K fluessig, weil die Hardware-Dekodierung erhalten bleibt (ein CPU-Filter
+-- wuerde jedes Frame ueber die CPU ziehen -> Ruckeln bei hoher Aufloesung).
+-- Umschaltbar in Stufen: aus -> leicht -> mittel -> stark -> aus.
+-- Die Shader senken Rot leicht und heben Blau (luminanz-erhaltend) und
+-- neutralisieren so den warmen Gelbstich.
+-- wbdir kommt per --script-opts=wbdir=... vom Server (Pfad zum mpv/-Ordner).
+local wbdir = (mp.get_opt and mp.get_opt("wbdir")) or nil
 local wb_levels = {
-    {name = "aus",  vf = nil},
-    {name = "auto", vf = "lavfi=[greyedge=difford=0:minknorm=1:sigma=1]"},
+    {name = "aus",    file = nil},
+    {name = "leicht", file = "wb_leicht.glsl"},
+    {name = "mittel", file = "wb_mittel.glsl"},
+    {name = "stark",  file = "wb_stark.glsl"},
 }
 local wb_idx = 1
 
 local function apply_wb()
-    mp.command("no-osd vf remove @wb")   -- alte Korrektur entfernen (falls da)
     local lvl = wb_levels[wb_idx]
-    if lvl.vf then
-        mp.command("no-osd vf add @wb:" .. lvl.vf)
+    if lvl.file and wbdir then
+        mp.set_property("glsl-shaders", wbdir .. "/" .. lvl.file)
+    else
+        mp.set_property("glsl-shaders", "")
     end
     mp.osd_message("Weissabgleich: " .. lvl.name, 1.5)
 end
 
 mp.add_forced_key_binding("w", "wb-cycle", function()
+    if not wbdir then
+        mp.osd_message("Weissabgleich: Shader-Pfad fehlt (wbdir)", 2)
+        return
+    end
     wb_idx = wb_idx % #wb_levels + 1
     apply_wb()
 end)
