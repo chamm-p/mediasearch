@@ -92,6 +92,13 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 | P | Auto-Advance Pause/Play |
 | Esc | schliessen |
 
+### mpv-Hotkeys (Video-Player, via `mpv/rotate.lua`)
+| Taste | Aktion |
+|---|---|
+| b / n | Video um 90° drehen (im/gegen Uhrzeigersinn) |
+| B | Rotation zuruecksetzen |
+| w | Weissabgleich gegen Gelbstich (aus → leicht → mittel → stark) |
+
 ### CLI-Befehle
 ```bash
 ./run.sh ui                    # Web-UI + Browser starten
