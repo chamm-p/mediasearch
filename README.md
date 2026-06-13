@@ -97,7 +97,7 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 |---|---|
 | b / n | Video um 90° drehen (im/gegen Uhrzeigersinn) |
 | B | Rotation zuruecksetzen |
-| w | Weissabgleich gegen Gelbstich (aus → auto → manuell) - auto schaetzt das Falschlicht selbst, manuell macht Haut rosa statt gelb |
+| w | Weissabgleich gegen Gelbstich (aus → auto → manuell) - auto = Grey-World (guenstig, fluessig), manuell = statisch (kuehlt + Haut rosa statt gelb) |
 
 ### CLI-Befehle
 ```bash

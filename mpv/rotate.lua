@@ -21,17 +21,19 @@ end)
 
 -- ---- Weissabgleich gegen Gelbstich (Taste w) ----
 -- Umschaltbar: aus -> auto -> manuell -> aus.
---   auto    = greyedge: schaetzt das Falschlicht selbst und korrigiert es
---             (echter Weissabgleich, nutzt z.B. das weisse Kleid als Referenz)
---   manuell = hautfreundlich: Gruen runter (Richtung Magenta/rosa) + Blau hoch,
---             Rot bleibt -> Haut wird rosa statt gelb-gruen, ohne alles blau
---             zu kippen wie ein reiner colorbalance-Blaushift.
+--   auto    = greyedge mit difford=0 (Grey-World): schaetzt das Falschlicht
+--             nur ueber den Kanal-Mittelwert statt ueber Bildgradienten -
+--             um Groessenordnungen billiger als difford=1, daher fluessig,
+--             aber bei einfarbigem Falschlicht praktisch gleich gut.
+--   manuell = rein statisch und sehr billig: colortemperature kuehlt den
+--             Warmstich (Blau/Gelb-Achse), colorbalance nimmt etwas Gruen
+--             raus (Richtung Magenta/rosa) - Haut wird rosa statt gelb-gruen.
 -- Eigenes Filter-Label '@wb', damit die Rotation (Property, kein Filter)
 -- unberuehrt bleibt. Bei fehlendem Filter zeigt mpv nur eine OSD-Meldung.
 local wb_levels = {
     {name = "aus",     vf = nil},
-    {name = "auto",    vf = "lavfi=[greyedge=difford=1:minknorm=1:sigma=2]"},
-    {name = "manuell", vf = "lavfi=[colorbalance=rm=0.04:gm=-0.10:bm=0.14:rh=0.03:gh=-0.06:bh=0.08]"},
+    {name = "auto",    vf = "lavfi=[greyedge=difford=0:minknorm=1:sigma=1]"},
+    {name = "manuell", vf = "lavfi=[colortemperature=temperature=8500:pl=1,colorbalance=gm=-0.07]"},
 }
 local wb_idx = 1
 
