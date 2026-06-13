@@ -463,25 +463,122 @@ def add_watch_time(root: Path, file_id: int, seconds: float) -> None:
     _invalidate_view_caches()
 
 
-def watch_video_proc(root: Path, file_id: int, proc: subprocess.Popen) -> None:
-    """Begleitet einen Player-Prozess (mpv) im Hintergrund und schreibt
-    nach dessen Ende die Laufzeit als Nutzungsdauer in die DB."""
-    started = time.time()
-    def _waiter() -> None:
+class PlayerManager:
+    """Verwaltet externe Player-/Viewer-Prozesse (mpv, xdg-open, ...).
+
+    Loest zwei Leaks:
+      1. STAPELN: ein neuer Vollbild-Player (mpv) beendet den vorherigen,
+         statt dass sich endlos loopende Instanzen aufhaeufen und das
+         System mit Video-Dekodierung auslasten.
+      2. ZOMBIES/THREADS: EIN Reaper-Thread pollt alle Prozesse, reaped
+         beendete (kein <defunct>, kein Thread-pro-Video) und schreibt die
+         Nutzungsdauer beendeter Video-Player in die DB - auch wenn sie
+         durch einen Nachfolger beendet wurden (elapsed = Anschauzeit)."""
+
+    REAP_INTERVAL = 2.0
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.entries: list[dict] = []   # {proc, file_id, started, track, fg}
+        self._reaper_on = False
+
+    def _ensure_reaper(self) -> None:
+        if self._reaper_on:
+            return
+        self._reaper_on = True
+        threading.Thread(target=self._reap_loop, daemon=True).start()
+
+    def _reap_loop(self) -> None:
+        while True:
+            time.sleep(self.REAP_INTERVAL)
+            try:
+                self.reap()
+            except Exception as e:
+                logger.error("player reaper: %s", e)
+
+    def reap(self) -> None:
+        """Beendete Prozesse einsammeln + Watch-Time buchen."""
+        finished: list[dict] = []
+        with self.lock:
+            still = []
+            for e in self.entries:
+                if e["proc"].poll() is None:
+                    still.append(e)
+                else:
+                    finished.append(e)
+            self.entries = still
+        if not finished:
+            return
+        root = current_root()
+        for e in finished:
+            if not e["track"] or root is None:
+                continue
+            elapsed = time.time() - e["started"]
+            if elapsed < 1.0:        # Fehlstart/Launcher - nicht werten
+                continue
+            try:
+                add_watch_time(root, e["file_id"], elapsed)
+                logger.info("watch-time: id=%d +%.1fs", e["file_id"], elapsed)
+            except Exception as ex:
+                logger.error("watch-time update failed (id=%d): %s",
+                             e["file_id"], ex)
+
+    @staticmethod
+    def _terminate(proc: subprocess.Popen) -> None:
         try:
-            proc.wait()
+            proc.terminate()
         except Exception:
             pass
-        elapsed = time.time() - started
-        # Sofort beendete Prozesse (Launcher-Stil, Fehlstart) nicht werten
-        if elapsed < 1.0:
-            return
-        try:
-            add_watch_time(root, file_id, elapsed)
-            logger.info("watch-time: id=%d +%.1fs", file_id, elapsed)
-        except Exception as e:
-            logger.error("watch-time update failed (id=%d): %s", file_id, e)
-    threading.Thread(target=_waiter, daemon=True).start()
+
+    def launch(self, cmd: list[str], *, file_id: int | None = None,
+               track: bool = False, foreground: bool = False
+               ) -> subprocess.Popen:
+        """Startet cmd. foreground=True beendet vorher laufende Vollbild-
+        Player (verhindert Stapeln). track=True misst die Laufzeit als
+        Nutzungsdauer fuer file_id."""
+        with self.lock:
+            if foreground:
+                for e in self.entries:
+                    if e["fg"] and e["proc"].poll() is None:
+                        self._terminate(e["proc"])
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            self.entries.append({"proc": proc, "file_id": file_id,
+                                 "started": time.time(), "track": track,
+                                 "fg": foreground})
+        self._ensure_reaper()
+        return proc
+
+    def stop_all(self) -> int:
+        """Beendet ALLE verwalteten Player. Gibt Anzahl beendeter zurueck."""
+        n = 0
+        with self.lock:
+            for e in self.entries:
+                if e["proc"].poll() is None:
+                    self._terminate(e["proc"])
+                    n += 1
+        self.reap()   # sofort buchen + aufraeumen, nicht erst in 2s
+        return n
+
+
+players = PlayerManager()
+
+
+@app.post("/api/players/stop")
+def api_players_stop() -> dict:
+    """Beendet alle laufenden Player/Viewer (mpv etc.)."""
+    n = players.stop_all()
+    logger.info("players/stop: %d beendet", n)
+    return {"ok": True, "stopped": n}
+
+
+@app.on_event("shutdown")
+def _shutdown_players() -> None:
+    """Beim Server-Stop alle Player beenden, damit nichts verwaist."""
+    try:
+        players.stop_all()
+    except Exception:
+        pass
 
 
 @app.post("/api/viewed")
@@ -1247,19 +1344,18 @@ def api_open(payload: dict) -> dict:
         cmd.append(str(p))
     else:
         cmd = ["xdg-open", str(p)]
+    # Videos laufen im (Vollbild-)Player -> als foreground fuehren, damit ein
+    # neues Video das vorige ersetzt (kein Stapeln) und die Laufzeit als
+    # Nutzungsdauer gemessen wird. Bilder (xdg-open/externer Viewer) duerfen
+    # mehrfach offen sein - nur registrieren, damit sie gereaped werden.
+    is_video = (ftype == "video")
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
+        players.launch(cmd, file_id=fid, track=is_video, foreground=is_video)
     except FileNotFoundError as e:
         raise HTTPException(500, f"viewer nicht gefunden: {cmd[0]} ({e})")
     except Exception as e:
         raise HTTPException(500, f"open failed: {e}")
-    # Anzeige vermerken; bei Videos zusaetzlich Nutzungsdauer =
-    # Player-Laufzeit (mpv blockt bis Esc) mitschreiben.
-    root = require_root()
-    mark_viewed(root, [fid])
-    if ftype == "video":
-        watch_video_proc(root, fid, proc)
+    mark_viewed(require_root(), [fid])
     return {"ok": True}
 
 @app.get("/api/duplicates")
@@ -1544,22 +1640,21 @@ def api_play(payload: dict) -> dict:
         logger.info("mpv script: %s", rotate_script)
     else:
         logger.warning("mpv script NICHT gefunden: %s", rotate_script)
-    if len(paths) == 1:
+    single = len(paths) == 1
+    if single:
         cmd = ["mpv", *mpv_extra, "--loop-file=inf", paths[0]]
     else:
         random.shuffle(paths)
         cmd = ["mpv", *mpv_extra, "--shuffle", "--loop-playlist=inf", *paths]
+    # Immer foreground -> ein neuer Random-Video-Start beendet den vorherigen
+    # mpv, damit sich keine endlos loopenden Player stapeln. Nutzungsdauer
+    # (mpv-Start bis Esc) nur bei genau EINEM Video zuordenbar.
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
+        players.launch(cmd, file_id=(resolved_ids[0] if single else None),
+                       track=single, foreground=True)
     except FileNotFoundError:
         raise HTTPException(500, "mpv not installed")
-    # Anzeige vermerken. Nutzungsdauer (mpv-Start bis Esc) nur bei genau
-    # EINEM Video messbar - bei Playlist ist die Zeit nicht zuordenbar.
-    root = require_root()
-    mark_viewed(root, resolved_ids)
-    if len(resolved_ids) == 1:
-        watch_video_proc(root, resolved_ids[0], proc)
+    mark_viewed(require_root(), resolved_ids)
     return {"ok": True, "count": len(paths)}
 
 # ---------- main ----------

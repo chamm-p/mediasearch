@@ -445,7 +445,9 @@
     <button id="slideshow-btn" class="primary" disabled
             title="Slideshow starten (S) - nur Bilder, sequentiell ab erstem Treffer">Slideshow [S]</button>
     <button id="play-btn" class="primary" disabled
-            title="Random Video (V) - ein zufaelliges Video aus den Treffern, mpv loopt bis Esc">Random Video [V]</button>
+            title="Random Video (V) - ein zufaelliges Video aus den Treffern, mpv loopt bis Esc. Ein neuer Start ersetzt den laufenden Player.">Random Video [V]</button>
+    <button id="stop-players-btn" class="danger"
+            title="Alle laufenden Player/Viewer (mpv) beenden (X)">Player stop [X]</button>
     <button id="lora-btn" disabled>LoRA</button>
     <button id="toggle-setup">Setup</button>
   </div>
@@ -931,6 +933,8 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key === "v" || e.key === "V") {
     if ($("#play-btn").disabled) return;
     e.preventDefault(); $("#play-btn").click();
+  } else if (e.key === "x" || e.key === "X") {
+    e.preventDefault(); $("#stop-players-btn").click();
   }
 });
 
@@ -2498,6 +2502,16 @@ $("#play-btn").addEventListener("click", async () => {
   const pick = videos[Math.floor(Math.random() * videos.length)];
   await fetch("/api/play", {method:"POST", headers:{"Content-Type":"application/json"},
                             body: JSON.stringify({ids: [pick.id]})});
+});
+
+$("#stop-players-btn").addEventListener("click", async () => {
+  try {
+    const r = await fetch("/api/players/stop", {method:"POST"}).then(r=>r.json());
+    const btn = $("#stop-players-btn");
+    const orig = btn.textContent;
+    btn.textContent = `${r.stopped ?? 0} beendet`;
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  } catch (e) { console.warn("players/stop fehlgeschlagen:", e); }
 });
 
 // ---- LoRA Export ----
