@@ -784,7 +784,7 @@ async function search(opts={}) {
   }
 
   const params = new URLSearchParams({
-    q: $("#q").value, type: $("#type").value, seen: $("#seen").value, min_watch: $("#seen-min").value,
+    q: $("#q").value, type: $("#type").value, seen: $("#seen").value, min_watch: seenMinSecs(),
     order: $("#order").value, limit: pageSize, offset: currentOffset,
   });
   const r = await fetch("/api/search?" + params).then(r=>r.json());
@@ -813,7 +813,7 @@ async function _autoLocateHighlighted() {
     file_id: String(id),
     q:    $("#q").value,
     type: $("#type").value,
-    seen: $("#seen").value, min_watch: $("#seen-min").value,
+    seen: $("#seen").value, min_watch: seenMinSecs(),
     order: $("#order").value,
   });
   try {
@@ -845,7 +845,7 @@ async function _prefetchPage(offset) {
   if (offset < 0) return;
   if (totalHits > 0 && offset >= totalHits) return;
   const params = new URLSearchParams({
-    q: $("#q").value, type: $("#type").value, seen: $("#seen").value, min_watch: $("#seen-min").value,
+    q: $("#q").value, type: $("#type").value, seen: $("#seen").value, min_watch: seenMinSecs(),
     order: $("#order").value, limit: pageSize, offset,
   });
   try {
@@ -1227,12 +1227,24 @@ function updateSeenMinVisibility() {
   $("#seen-min").style.display = on ? "" : "none";
   $("#seen-min-unit").style.display = on ? "" : "none";
 }
+// Robust gegen leeres/ungueltiges Feld: nie "" senden (sonst 422 am Server),
+// immer eine Zahl >= 0.
+function seenMinSecs() {
+  const v = parseFloat($("#seen-min").value);
+  return (isNaN(v) || v < 0) ? 0 : v;
+}
 let _seenMinTimer = null;
+function _applySeenMin() {
+  if ($("#seen").value === "seen_min") { saveUiState(); search(); }
+}
 $("#seen-min").addEventListener("input", () => {
   clearTimeout(_seenMinTimer);
-  _seenMinTimer = setTimeout(() => {
-    if ($("#seen").value === "seen_min") { saveUiState(); search(); }
-  }, 350);   // debounce: erst tippen lassen, dann suchen
+  _seenMinTimer = setTimeout(_applySeenMin, 350);   // debounce beim Tippen
+});
+// sofort anwenden bei Enter / Blur / Spinner-Klick (nicht aufs Debounce warten)
+$("#seen-min").addEventListener("change", () => { clearTimeout(_seenMinTimer); _applySeenMin(); });
+$("#seen-min").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { clearTimeout(_seenMinTimer); _applySeenMin(); $("#seen-min").blur(); }
 });
 
 // ---- UI-State persistieren (Browser-LocalStorage) ----
@@ -1937,7 +1949,7 @@ async function fetchAllImageHits() {
   const params = new URLSearchParams({
     q: $("#q").value,
     type: "image",
-    seen: $("#seen").value, min_watch: $("#seen-min").value,
+    seen: $("#seen").value, min_watch: seenMinSecs(),
     order: "path",
   });
   const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
@@ -1950,7 +1962,7 @@ async function fetchAllVideoHits() {
   const params = new URLSearchParams({
     q: $("#q").value,
     type: "video",
-    seen: $("#seen").value, min_watch: $("#seen-min").value,
+    seen: $("#seen").value, min_watch: seenMinSecs(),
     order: "path",
   });
   const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
@@ -2425,7 +2437,7 @@ async function closeSlideshow() {
       file_id: String(lastId),
       q:    $("#q").value,
       type: $("#type").value,
-      seen: $("#seen").value, min_watch: $("#seen-min").value,
+      seen: $("#seen").value, min_watch: seenMinSecs(),
       order: $("#order").value,
     });
     let offset = -1;
