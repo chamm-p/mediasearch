@@ -23,27 +23,29 @@ end)
 -- Feste Korrektur auf der GPU (glsl-shader) statt CPU-Filter: laeuft auch bei
 -- 4K fluessig, weil die Hardware-Dekodierung erhalten bleibt (ein CPU-Filter
 -- wuerde jedes Frame ueber die CPU ziehen -> Ruckeln bei hoher Aufloesung).
--- Umschaltbar in Stufen: aus -> leicht -> mittel -> stark -> aus.
+-- Start = mittel (an by default - passt fuer nahezu alles). Taste w schaltet
+-- weiter: mittel -> stark -> aus -> mittel ...
 -- Die Shader senken Rot leicht und heben Blau (luminanz-erhaltend) und
 -- neutralisieren so den warmen Gelbstich.
 -- wbdir kommt per --script-opts=wbdir=... vom Server (Pfad zum mpv/-Ordner).
 local wbdir = (mp.get_opt and mp.get_opt("wbdir")) or nil
 local wb_levels = {
-    {name = "aus",    file = nil},
-    {name = "leicht", file = "wb_leicht.glsl"},
     {name = "mittel", file = "wb_mittel.glsl"},
     {name = "stark",  file = "wb_stark.glsl"},
+    {name = "aus",    file = nil},
 }
 local wb_idx = 1
 
-local function apply_wb()
+local function apply_wb(silent)
     local lvl = wb_levels[wb_idx]
     if lvl.file and wbdir then
         mp.set_property("glsl-shaders", wbdir .. "/" .. lvl.file)
     else
         mp.set_property("glsl-shaders", "")
     end
-    mp.osd_message("Weissabgleich: " .. lvl.name, 1.5)
+    if not silent then
+        mp.osd_message("Weissabgleich: " .. lvl.name, 1.5)
+    end
 end
 
 mp.add_forced_key_binding("w", "wb-cycle", function()
@@ -54,3 +56,8 @@ mp.add_forced_key_binding("w", "wb-cycle", function()
     wb_idx = wb_idx % #wb_levels + 1
     apply_wb()
 end)
+
+-- Default beim Laden setzen: mittel (sofern Shader-Pfad bekannt).
+if wbdir then
+    apply_wb(true)
+end

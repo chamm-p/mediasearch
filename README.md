@@ -97,7 +97,7 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 |---|---|
 | b / n | Video um 90° drehen (im/gegen Uhrzeigersinn) |
 | B | Rotation zuruecksetzen |
-| w | Weissabgleich gegen Gelbstich (aus → leicht → mittel → stark) - GPU-Shader, fluessig auch bei 4K |
+| w | Weissabgleich gegen Gelbstich - Start mittel, w schaltet mittel → stark → aus (GPU-Shader, fluessig auch bei 4K) |
 
 ### CLI-Befehle
 ```bash
