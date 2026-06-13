@@ -426,9 +426,22 @@ def _invalidate_view_caches() -> None:
     """Wirft sortierte ID-Listen weg, deren Reihenfolge/Inhalt von
     Anzeige-Daten abhaengt (seen-Filter aktiv oder Nutzungsdauer-Sortierung)."""
     for key in list(_SORTED_IDS_CACHE.keys()):
-        _, _, seen, order = key
+        seen, order = key[2], key[4]
         if seen or order == "watched_desc":
             _SORTED_IDS_CACHE.pop(key, None)
+
+
+def _seen_filter(seen: str, min_watch: float = 0.0) -> tuple[str, list]:
+    """SQL-WHERE-Fragment + params fuer den Anzeige-Status-Filter.
+    seen: '' alle | 'unseen' nie gezeigt | 'seen' schon gezeigt |
+          'seen_min' Nutzungsdauer > min_watch Sekunden (faktisch Videos)."""
+    if seen == "unseen":
+        return "f.viewed_at=0", []
+    if seen == "seen":
+        return "f.viewed_at>0", []
+    if seen == "seen_min":
+        return "f.watch_seconds>?", [float(min_watch)]
+    return "", []
 
 
 def mark_viewed(root: Path, ids: list[int]) -> int:
@@ -889,11 +902,12 @@ _SORTED_IDS_CACHE: dict = {}     # key=(q, type, order) -> {t, ids}
 _SORTED_IDS_TTL = 60.0           # s
 
 def _get_sorted_ids(conn, q: str, type_filter: str | None,
-                    order: str, seen: str = "") -> list[int]:
+                    order: str, seen: str = "",
+                    min_watch: float = 0.0) -> list[int]:
     """Liefert die ID-Liste in der gewaehlten Reihenfolge, gecached.
     Nur fuer deterministische Sortierungen sinnvoll (path/newest/oldest).
-    seen: '' (alle) | 'unseen' (noch nie gezeigt) | 'seen' (schon gezeigt)."""
-    key = (q.strip(), type_filter or "", seen or "", order)
+    seen: '' (alle) | 'unseen' | 'seen' | 'seen_min' (>min_watch s)."""
+    key = (q.strip(), type_filter or "", seen or "", round(min_watch, 3), order)
     now = time.time()
     cached = _SORTED_IDS_CACHE.get(key)
     if cached and (now - cached["t"]) < _SORTED_IDS_TTL:
@@ -902,10 +916,9 @@ def _get_sorted_ids(conn, q: str, type_filter: str | None,
     params: list = []
     if type_filter:
         where.append("f.type=?"); params.append(type_filter)
-    if seen == "unseen":
-        where.append("f.viewed_at=0")
-    elif seen == "seen":
-        where.append("f.viewed_at>0")
+    sc, sp = _seen_filter(seen, min_watch)
+    if sc:
+        where.append(sc); params.extend(sp)
     if order == "path":
         # sort_key ist vorberechnet + indexiert -> SQL-Order ist viel schneller
         # als Python-Sort. Falls sort_key NULL (Migration nicht durch),
@@ -1046,7 +1059,8 @@ def fts_query(q: str) -> str:
 @app.get("/api/search")
 def api_search(q: str = "", type: Optional[str] = None,
                limit: int = 200, offset: int = 0,
-               order: str = "relevance", seen: str = "") -> dict:
+               order: str = "relevance", seen: str = "",
+               min_watch: float = 0.0) -> dict:
     root = current_root()
     if root is None:
         return {"results": [], "no_root": True}
@@ -1055,14 +1069,14 @@ def api_search(q: str = "", type: Optional[str] = None,
     conn = connect(root)
     try:
         type_filter = type if type in ("image", "video") else None
-        seen = seen if seen in ("unseen", "seen") else ""
+        seen = seen if seen in ("unseen", "seen", "seen_min") else ""
 
         # Schneller Pfad fuer deterministische Sortierungen: gecachte
         # ID-Liste nutzen, slicen, dann metadata fuer 80 Files holen
         # (statt 280k mit Custom-Collation zu sortieren).
         if order in ("path", "newest", "oldest", "size_desc", "size_asc",
                      "watched_desc"):
-            ids = _get_sorted_ids(conn, q, type_filter, order, seen)
+            ids = _get_sorted_ids(conn, q, type_filter, order, seen, min_watch)
             total = len(ids)
             page_ids = ids[offset:offset + limit]
             if not page_ids:
@@ -1097,10 +1111,9 @@ def api_search(q: str = "", type: Optional[str] = None,
         where = ["f.status='done'"]
         if type_filter:
             where.append("f.type=?"); params.append(type_filter)
-        if seen == "unseen":
-            where.append("f.viewed_at=0")
-        elif seen == "seen":
-            where.append("f.viewed_at>0")
+        sc, sp = _seen_filter(seen, min_watch)
+        if sc:
+            where.append(sc); params.extend(sp)
         order_map = {
             "random":    "RANDOM()",
             "relevance": None,   # nur bei Suche; sonst f.id DESC
@@ -1153,6 +1166,7 @@ def api_search(q: str = "", type: Optional[str] = None,
 def api_search_locate(file_id: int, q: str = "",
                        type: Optional[str] = None,
                        order: str = "relevance", seen: str = "",
+                       min_watch: float = 0.0,
                        max_scan: int = 200000) -> dict:
     """Findet die Position (offset) einer Datei in der aktuellen
     Suchergebnis-Reihenfolge. -1 wenn nicht enthalten."""
@@ -1164,10 +1178,10 @@ def api_search_locate(file_id: int, q: str = "",
         # bei random ist locate sinnlos (jede Anfrage andere Reihenfolge)
         return {"offset": -1, "note": "random order has no fixed offsets"}
     type_filter = type if type in ("image", "video") else None
-    seen = seen if seen in ("unseen", "seen") else ""
+    seen = seen if seen in ("unseen", "seen", "seen_min") else ""
     conn = connect(root)
     try:
-        ids = _get_sorted_ids(conn, q, type_filter, order, seen)
+        ids = _get_sorted_ids(conn, q, type_filter, order, seen, min_watch)
         # Schnelle Suche per Index-Lookup statt linearer Iteration
         for i, row_id in enumerate(ids):
             if row_id == file_id:
@@ -1180,6 +1194,7 @@ def api_search_locate(file_id: int, q: str = "",
 @app.get("/api/search/ids")
 def api_search_ids(q: str = "", type: Optional[str] = None,
                    order: str = "relevance", seen: str = "",
+                   min_watch: float = 0.0,
                    max_results: int = 1000000) -> dict:
     """Liefert ALLE matchenden Items (leichtgewichtig: id+path+type).
     Fuer Slideshow ueber die ganze Treffermenge."""
@@ -1196,10 +1211,10 @@ def api_search_ids(q: str = "", type: Optional[str] = None,
         where = ["f.status='done'"]
         if type in ("image","video"):
             where.append("f.type=?"); params.append(type)
-        if seen == "unseen":
-            where.append("f.viewed_at=0")
-        elif seen == "seen":
-            where.append("f.viewed_at>0")
+        sc, sp = _seen_filter(seen if seen in ("unseen","seen","seen_min") else "",
+                              min_watch)
+        if sc:
+            where.append(sc); params.extend(sp)
         order_map = {
             "newest":    "f.mtime DESC",
             "oldest":    "f.mtime ASC",

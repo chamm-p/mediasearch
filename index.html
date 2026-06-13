@@ -423,7 +423,12 @@
       <option value="">Gezeigt+Neu</option>
       <option value="unseen">Nur ungezeigte</option>
       <option value="seen">Nur gezeigte</option>
+      <option value="seen_min">Lange gesehen</option>
     </select>
+    <input id="seen-min" type="number" min="0" step="1" value="6"
+           title="Mindest-Nutzungsdauer in Sekunden (nur Videos sammeln Nutzungsdauer)"
+           style="display:none;width:58px"><span id="seen-min-unit"
+           style="display:none;color:var(--text-faint);font-size:0.85rem;align-self:center">Sek.</span>
     <select id="order" title="Sortierung der Trefferliste">
       <option value="relevance">Relevanz</option>
       <option value="newest">Neueste zuerst</option>
@@ -734,7 +739,7 @@ let _pinnedOffsets = new Set();
 let _cacheSig = "";
 function _querySig() {
   return [$("#q").value, $("#type").value, $("#seen").value,
-          $("#order").value, $("#limit-q").value].join("|");
+          $("#seen-min").value, $("#order").value, $("#limit-q").value].join("|");
 }
 function _cachePut(offset, results, total) {
   _pageCache.set(offset, {results: results.slice(), total});
@@ -779,7 +784,7 @@ async function search(opts={}) {
   }
 
   const params = new URLSearchParams({
-    q: $("#q").value, type: $("#type").value, seen: $("#seen").value,
+    q: $("#q").value, type: $("#type").value, seen: $("#seen").value, min_watch: $("#seen-min").value,
     order: $("#order").value, limit: pageSize, offset: currentOffset,
   });
   const r = await fetch("/api/search?" + params).then(r=>r.json());
@@ -808,7 +813,7 @@ async function _autoLocateHighlighted() {
     file_id: String(id),
     q:    $("#q").value,
     type: $("#type").value,
-    seen: $("#seen").value,
+    seen: $("#seen").value, min_watch: $("#seen-min").value,
     order: $("#order").value,
   });
   try {
@@ -840,7 +845,7 @@ async function _prefetchPage(offset) {
   if (offset < 0) return;
   if (totalHits > 0 && offset >= totalHits) return;
   const params = new URLSearchParams({
-    q: $("#q").value, type: $("#type").value, seen: $("#seen").value,
+    q: $("#q").value, type: $("#type").value, seen: $("#seen").value, min_watch: $("#seen-min").value,
     order: $("#order").value, limit: pageSize, offset,
   });
   try {
@@ -1211,8 +1216,24 @@ $("#q-clear").addEventListener("click", () => {
   $("#q").value = ""; updateQClear(); search(); $("#q").blur();
 });
 $("#type").addEventListener("change", () => { saveUiState(); search(); $("#type").blur(); });
-$("#seen").addEventListener("change", () => { saveUiState(); search(); $("#seen").blur(); });
+$("#seen").addEventListener("change", () => {
+  updateSeenMinVisibility(); saveUiState(); search(); $("#seen").blur();
+});
 $("#order").addEventListener("change", () => { saveUiState(); search(); $("#order").blur(); });
+
+// Sekunden-Feld nur bei "Lange gesehen" einblenden - haelt die Leiste schlank
+function updateSeenMinVisibility() {
+  const on = $("#seen").value === "seen_min";
+  $("#seen-min").style.display = on ? "" : "none";
+  $("#seen-min-unit").style.display = on ? "" : "none";
+}
+let _seenMinTimer = null;
+$("#seen-min").addEventListener("input", () => {
+  clearTimeout(_seenMinTimer);
+  _seenMinTimer = setTimeout(() => {
+    if ($("#seen").value === "seen_min") { saveUiState(); search(); }
+  }, 350);   // debounce: erst tippen lassen, dann suchen
+});
 
 // ---- UI-State persistieren (Browser-LocalStorage) ----
 const UI_STATE_KEY = "mediasearch.ui";
@@ -1222,6 +1243,7 @@ function saveUiState() {
       order: $("#order").value,
       type:  $("#type").value,
       seen:  $("#seen").value,
+      seen_min: $("#seen-min").value,
     }));
   } catch {}
 }
@@ -1241,7 +1263,11 @@ function loadUiState() {
       const opt = [...$("#seen").options].find(o => o.value === s.seen);
       if (opt) $("#seen").value = s.seen;
     }
+    if (s.seen_min !== undefined && s.seen_min !== "") {
+      $("#seen-min").value = s.seen_min;
+    }
   } catch {}
+  updateSeenMinVisibility();
 }
 $("#select-all").addEventListener("click", () => {
   for (const r of results) selected.set(r.id, r);
@@ -1911,7 +1937,7 @@ async function fetchAllImageHits() {
   const params = new URLSearchParams({
     q: $("#q").value,
     type: "image",
-    seen: $("#seen").value,
+    seen: $("#seen").value, min_watch: $("#seen-min").value,
     order: "path",
   });
   const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
@@ -1924,7 +1950,7 @@ async function fetchAllVideoHits() {
   const params = new URLSearchParams({
     q: $("#q").value,
     type: "video",
-    seen: $("#seen").value,
+    seen: $("#seen").value, min_watch: $("#seen-min").value,
     order: "path",
   });
   const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
@@ -2399,7 +2425,7 @@ async function closeSlideshow() {
       file_id: String(lastId),
       q:    $("#q").value,
       type: $("#type").value,
-      seen: $("#seen").value,
+      seen: $("#seen").value, min_watch: $("#seen-min").value,
       order: $("#order").value,
     });
     let offset = -1;
