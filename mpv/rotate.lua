@@ -20,20 +20,16 @@ mp.add_forced_key_binding("B", "rotate-reset", function()
 end)
 
 -- ---- Weissabgleich gegen Gelbstich (Taste w) ----
--- Umschaltbar: aus -> auto -> manuell -> aus.
---   auto    = greyedge mit difford=0 (Grey-World): schaetzt das Falschlicht
---             nur ueber den Kanal-Mittelwert statt ueber Bildgradienten -
---             um Groessenordnungen billiger als difford=1, daher fluessig,
---             aber bei einfarbigem Falschlicht praktisch gleich gut.
---   manuell = rein statisch und sehr billig: colortemperature kuehlt den
---             Warmstich (Blau/Gelb-Achse), colorbalance nimmt etwas Gruen
---             raus (Richtung Magenta/rosa) - Haut wird rosa statt gelb-gruen.
+-- Umschaltbar: aus -> auto -> aus.
+--   auto = greyedge mit difford=0 (Grey-World): schaetzt das Falschlicht
+--          nur ueber den Kanal-Mittelwert statt ueber Bildgradienten -
+--          um Groessenordnungen billiger als difford=1, daher fluessig,
+--          aber bei einfarbigem Falschlicht praktisch gleich gut.
 -- Eigenes Filter-Label '@wb', damit die Rotation (Property, kein Filter)
 -- unberuehrt bleibt. Bei fehlendem Filter zeigt mpv nur eine OSD-Meldung.
 local wb_levels = {
-    {name = "aus",     vf = nil},
-    {name = "auto",    vf = "lavfi=[greyedge=difford=0:minknorm=1:sigma=1]"},
-    {name = "manuell", vf = "lavfi=[colortemperature=temperature=8500:pl=1,colorbalance=gm=-0.07]"},
+    {name = "aus",  vf = nil},
+    {name = "auto", vf = "lavfi=[greyedge=difford=0:minknorm=1:sigma=1]"},
 }
 local wb_idx = 1
 
