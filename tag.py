@@ -106,14 +106,16 @@ PROMPT_DEFAULT = (
 )
 
 
-def load_prompt() -> tuple[str, str]:
-    """Laedt den Tag-Prompt.
+def load_prompt(root: "Path | None" = None) -> tuple[str, str]:
+    """Laedt den Tag-Prompt mit dieser Prioritaet:
 
-    Sucht 'prompt.txt' neben tag.py. Falls vorhanden, wird sie verwendet
-    (Userdaten ueberleben 'git pull', weil prompt.txt gitignored ist).
-    Andernfalls wird PROMPT_DEFAULT verwendet und als 'prompt.default.txt'
-    rausgeschrieben, falls die Vorlage noch nicht existiert - so hat der
-    User immer eine Referenz zum Vergleichen oder Kopieren.
+    1) pro-Wurzelverzeichnis: data/<hash>/prompt.txt (in der UI setzbar) -
+       gilt nur fuer genau dieses Medien-Verzeichnis.
+    2) global: 'prompt.txt' neben tag.py (gitignored, ueberlebt 'git pull').
+    3) eingebauter PROMPT_DEFAULT.
+
+    Eine Kopie des Defaults wird als 'prompt.default.txt' rausgeschrieben
+    (falls noch nicht vorhanden) - als Referenz zum Vergleichen/Kopieren.
 
     Returns: (prompt_text, source_label)
     """
@@ -126,6 +128,19 @@ def load_prompt() -> tuple[str, str]:
             default_file.write_text(PROMPT_DEFAULT, encoding="utf-8")
     except OSError:
         pass
+    # 1) pro-Root-Override
+    if root is not None:
+        try:
+            from common import prompt_path
+            rp = prompt_path(root)
+            if rp.exists():
+                txt = rp.read_text(encoding="utf-8")
+                if txt.strip():
+                    return txt, f"root-override ({rp})"
+        except OSError as e:
+            print(f"Warnung: root-prompt nicht lesbar ({e}), nutze global/Default.",
+                  flush=True)
+    # 2) globale prompt.txt
     if user_file.exists():
         try:
             txt = user_file.read_text(encoding="utf-8")
@@ -773,6 +788,10 @@ def cmd_tag(args: argparse.Namespace) -> None:
     if not root.is_dir():
         raise SystemExit(f"not a directory: {root}")
     init_db(root)
+
+    # Prompt jetzt root-abhaengig laden (pro-Root-Override > global > default).
+    global PROMPT, _PROMPT_SRC
+    PROMPT, _PROMPT_SRC = load_prompt(root)
 
     print(f"tag.py gestartet, root={root}", flush=True)
     print(f"prompt: {_PROMPT_SRC} ({len(PROMPT)} zeichen)", flush=True)

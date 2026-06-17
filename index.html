@@ -502,6 +502,35 @@
       </div>
     </div>
   </div>
+
+  <!-- System-Prompt fuers Tagging - pro Wurzelverzeichnis umschaltbar -->
+  <div class="row" style="align-items:flex-start;margin-top:12px">
+    <label style="padding-top:6px">System-Prompt</label>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;gap:14px;align-items:center;margin-bottom:5px;flex-wrap:wrap">
+        <label style="font-size:0.85rem;display:flex;align-items:center;gap:5px">
+          <input type="checkbox" id="p-custom" style="width:auto">
+          eigener Prompt fuer dieses Verzeichnis
+        </label>
+        <span id="p-src" style="font-size:11px;color:#888"></span>
+      </div>
+      <textarea id="p-text" rows="8" spellcheck="false"
+        style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:0.78rem;
+               line-height:1.45;background:var(--bg-3);color:var(--text);
+               border:1px solid var(--line);border-radius:4px;padding:8px;resize:vertical"></textarea>
+      <div style="margin-top:5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="p-save">Prompt speichern</button>
+        <button id="p-reset" title="Eigenen Prompt entfernen - wieder globalen Default nutzen">Auf Default zuruecksetzen</button>
+        <span id="p-msg" style="font-size:12px"></span>
+      </div>
+      <div style="font-size:11px;color:#888;margin-top:4px">
+        Gilt nur fuers aktuelle Wurzelverzeichnis und wird beim naechsten
+        Tagging-Start verwendet. Ohne Haken zaehlt der globale Default
+        (<code>prompt.txt</code> bzw. eingebaut).
+      </div>
+    </div>
+  </div>
+
   <div class="actions">
     <button id="s-save">Speichern</button>
     <button id="s-test">LLM testen</button>
@@ -1374,10 +1403,69 @@ async function saveSettings() {
       _pageCache.clear(); _pinnedOffsets.clear(); _cacheSig = "";
       _metaCache.clear(); selected.clear();
       search({offset: 0});
+      loadPrompt();   // anderer Root -> ggf. anderer Prompt-Override
     }
   } else { $("#s-msg").textContent = "Fehler beim Speichern"; }
 }
 $("#s-save").addEventListener("click", saveSettings);
+
+// ---- System-Prompt (pro Wurzelverzeichnis umschaltbar) ----
+let _promptDefault = "";
+function updatePromptUI() {
+  const custom = $("#p-custom").checked;
+  const ta = $("#p-text");
+  ta.disabled = !custom;
+  ta.style.opacity = custom ? "1" : "0.55";
+  $("#p-reset").disabled = !custom;
+}
+async function loadPrompt() {
+  try {
+    const d = await fetch("/api/prompt").then(r=>r.json());
+    _promptDefault = d.default_text || "";
+    $("#p-custom").checked = !!d.is_custom;
+    $("#p-text").value = d.text || "";
+    $("#p-src").textContent = d.no_root
+      ? "(kein Wurzelverzeichnis gesetzt)"
+      : (d.is_custom ? "aktiv: eigener Prompt fuer dieses Verzeichnis"
+                     : "aktiv: globaler Default");
+    updatePromptUI();
+  } catch (e) { console.warn("prompt laden fehlgeschlagen:", e); }
+}
+$("#p-custom").addEventListener("change", () => {
+  // Beim Aktivieren: leeres Feld mit Default vorbefuellen (Startpunkt)
+  if ($("#p-custom").checked && !$("#p-text").value.trim()) {
+    $("#p-text").value = _promptDefault;
+  }
+  updatePromptUI();
+  if ($("#p-custom").checked) $("#p-text").focus();
+});
+$("#p-save").addEventListener("click", async () => {
+  const custom = $("#p-custom").checked;
+  const body = custom ? {text: $("#p-text").value} : {reset: true};
+  $("#p-msg").textContent = "speichere...";
+  try {
+    const r = await fetch("/api/prompt", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.status);
+    $("#p-msg").textContent = j.is_custom ? "gespeichert (eigener Prompt)"
+                                          : "globaler Default aktiv";
+    setTimeout(()=>$("#p-msg").textContent="", 2500);
+    await loadPrompt();
+  } catch (e) {
+    $("#p-msg").textContent = "Fehler: " + e;
+  }
+});
+$("#p-reset").addEventListener("click", async () => {
+  $("#p-custom").checked = false;
+  try {
+    await fetch("/api/prompt", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({reset:true})});
+  } catch (e) { console.warn(e); }
+  await loadPrompt();
+  $("#p-msg").textContent = "auf Default zurueckgesetzt";
+  setTimeout(()=>$("#p-msg").textContent="", 2500);
+});
 
 function showMsg(text, color) {
   const el = $("#s-msg");
@@ -2629,7 +2717,7 @@ $("#lora-do").addEventListener("click", async () => {
   if (!s.root) $("#setup").classList.add("active");  // open setup if no root yet
   _lastPageSize = computePageSize();
   loadUiState();   // letzte Sortierung / Typ-Filter aus localStorage
-  loadStats(); loadStatus(); loadLog(); loadManualTags();
+  loadStats(); loadStatus(); loadLog(); loadManualTags(); loadPrompt();
   // Initial search + blur, damit Pfeiltasten sofort die Seitenwahl steuern
   // (Suchfeld hat autofocus, sonst wuerde -> die Cursor-Position bewegen).
   await search();

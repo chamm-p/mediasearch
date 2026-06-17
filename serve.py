@@ -677,6 +677,83 @@ def api_listdir(path: str = "") -> dict:
         raise HTTPException(403, "permission denied")
     return {"path": str(p), "parent": str(p.parent), "entries": entries}
 
+def _builtin_default_prompt() -> str:
+    """Eingebauter Default-Prompt (aus prompt.default.txt, im Repo)."""
+    f = HERE / "prompt.default.txt"
+    try:
+        if f.is_file():
+            t = f.read_text(encoding="utf-8")
+            if t.strip():
+                return t
+    except OSError:
+        pass
+    return ""
+
+
+def _global_prompt() -> str:
+    """Globaler Prompt: prompt.txt neben tag.py, sonst der Default."""
+    f = HERE / "prompt.txt"
+    try:
+        if f.is_file():
+            t = f.read_text(encoding="utf-8")
+            if t.strip():
+                return t
+    except OSError:
+        pass
+    return _builtin_default_prompt()
+
+
+@app.get("/api/prompt")
+def api_get_prompt() -> dict:
+    """Liefert den fuer das aktuelle Wurzelverzeichnis wirksamen Tag-Prompt.
+    is_custom=True -> dieser Root hat einen eigenen Prompt (Override)."""
+    from common import prompt_path
+    glob = _global_prompt()
+    root = current_root()
+    if root is None:
+        return {"text": glob, "is_custom": False, "source": "global",
+                "default_text": glob, "no_root": True}
+    pp = prompt_path(root)
+    root_txt = ""
+    if pp.is_file():
+        try:
+            root_txt = pp.read_text(encoding="utf-8")
+        except OSError:
+            root_txt = ""
+    is_custom = bool(root_txt.strip())
+    return {
+        "text": root_txt if is_custom else glob,
+        "is_custom": is_custom,
+        "source": "root" if is_custom else "global",
+        "default_text": glob,
+    }
+
+
+@app.post("/api/prompt")
+def api_set_prompt(payload: dict) -> dict:
+    """Setzt/entfernt den pro-Root-Prompt-Override.
+    {text: str}  -> als Override fuer das aktuelle Wurzelverzeichnis speichern.
+    {reset: true} oder leerer Text -> Override entfernen (wieder global/Default).
+    Greift beim naechsten Tagger-Start (kein Server-Neustart noetig)."""
+    from common import prompt_path
+    root = require_root()
+    pp = prompt_path(root)
+    text = str(payload.get("text") or "")
+    if payload.get("reset") or not text.strip():
+        try:
+            pp.unlink(missing_ok=True)
+        except OSError as e:
+            raise HTTPException(500, f"konnte Override nicht entfernen: {e}")
+        logger.info("prompt: root-override entfernt (%s)", root)
+        return {"ok": True, "is_custom": False}
+    try:
+        pp.write_text(text, encoding="utf-8")
+    except OSError as e:
+        raise HTTPException(500, f"konnte Prompt nicht speichern: {e}")
+    logger.info("prompt: root-override gespeichert (%s, %d zeichen)", root, len(text))
+    return {"ok": True, "is_custom": True}
+
+
 @app.get("/api/tags/manual")
 def api_manual_tags() -> dict:
     """Liefert die in manual_tags.json definierten Gruppen + Tags."""

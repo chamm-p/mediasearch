@@ -259,6 +259,13 @@ def thumb_path(root: Path, file_id: int) -> Path:
     return root_slot(root) / "thumbs" / f"{file_id}.jpg"
 
 
+def prompt_path(root: Path) -> Path:
+    """Optionaler, pro-Wurzelverzeichnis ueberschriebener Tag-Prompt.
+    Liegt im Daten-Slot des Roots (data/<hash>/prompt.txt). Existiert er,
+    hat er Vorrang vor der globalen prompt.txt / dem Default."""
+    return root_slot(root) / "prompt.txt"
+
+
 def media_type(path: Path) -> str | None:
     ext = path.suffix.lower()
     if ext in IMAGE_EXTS:
