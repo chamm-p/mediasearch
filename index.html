@@ -1294,8 +1294,10 @@ $("#clear-sel").addEventListener("click", () => {
 // ---- Setup panel ----
 $("#toggle-setup").addEventListener("click", () => $("#setup").classList.toggle("active"));
 
+let _loadedRoot = "";   // zuletzt geladenes Wurzelverzeichnis (Wechsel erkennen)
 async function loadSettings() {
   const s = await fetch("/api/settings").then(r=>r.json());
+  _loadedRoot = (s.root || "").trim();
   $("#s-root").value     = s.root || "";
   $("#s-limit").value    = s.limit ?? "";
   $("#s-workers").value  = s.workers ?? 4;
@@ -1355,11 +1357,25 @@ function gatherSettings() {
 }
 
 async function saveSettings() {
+  const newRoot = $("#s-root").value.trim();
+  const rootChanged = newRoot !== _loadedRoot;
   const r = await fetch("/api/settings", {method:"POST",
        headers:{"Content-Type":"application/json"},
        body: JSON.stringify(gatherSettings())});
-  if (r.ok) { $("#s-msg").textContent = "gespeichert"; setTimeout(()=>$("#s-msg").textContent="", 2000); loadStats(); }
-  else { $("#s-msg").textContent = "Fehler beim Speichern"; }
+  if (r.ok) {
+    $("#s-msg").textContent = "gespeichert";
+    setTimeout(()=>$("#s-msg").textContent="", 2000);
+    loadStats();
+    // Wurzelverzeichnis gewechselt -> andere DB. Browser-Cache (Seiten, Pins,
+    // Meta) verwerfen und frisch suchen, damit keine Treffer/Thumbs vom alten
+    // Root haengenbleiben.
+    if (rootChanged) {
+      _loadedRoot = newRoot;
+      _pageCache.clear(); _pinnedOffsets.clear(); _cacheSig = "";
+      _metaCache.clear(); selected.clear();
+      search({offset: 0});
+    }
+  } else { $("#s-msg").textContent = "Fehler beim Speichern"; }
 }
 $("#s-save").addEventListener("click", saveSettings);
 

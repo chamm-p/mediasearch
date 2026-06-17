@@ -621,6 +621,7 @@ def api_get_settings() -> dict:
 @app.post("/api/settings")
 def api_set_settings(payload: dict) -> dict:
     cur = load_settings()
+    old_root = (cur.get("root") or "").strip()
     allowed = {"root","endpoint","model","api_key","workers","limit",
                "retry_errors","retag","only"}
     for k in allowed:
@@ -636,6 +637,15 @@ def api_set_settings(payload: dict) -> dict:
     cur["retag"] = bool(cur.get("retag"))
     cur["only"] = cur.get("only") or ""
     save_settings(cur)
+    # Root gewechselt? Dann die nicht-root-spezifischen Caches leeren, sonst
+    # koennten gecachte ID-Listen/Stats vom alten Wurzelverzeichnis kurz
+    # weiterbedient werden (-> falsche/leere Treffer fuer bis zu 60s).
+    new_root = (cur.get("root") or "").strip()
+    if new_root != old_root:
+        _SORTED_IDS_CACHE.clear()
+        _STATS_CACHE["data"] = None
+        logger.info("root gewechselt (%s -> %s), caches geleert",
+                    old_root or "<leer>", new_root or "<leer>")
     # init db on new root
     if cur.get("root"):
         p = Path(cur["root"]).expanduser()
