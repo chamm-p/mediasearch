@@ -43,7 +43,7 @@ echo
 SLOT=""
 slot_count=0
 for d in data/*/; do
-    [ -f "$d/files.db" ] || continue
+    [ -f "$d/mediasearch.db" ] || continue
     slot_count=$((slot_count+1))
     LAST="$d"
 done
@@ -57,7 +57,7 @@ elif [ "$slot_count" -eq 1 ]; then
 else
     # mehrere slots: den nehmen dessen root.txt zum alten root passt
     for d in data/*/; do
-        [ -f "$d/files.db" ] || continue
+        [ -f "$d/mediasearch.db" ] || continue
         [ -f "$d/root.txt" ] || continue
         rt="$(cat "$d/root.txt" 2>/dev/null | tr -d '[:space:]')"
         if [ -n "$OLD" ] && [ "$rt" = "$(echo "$OLD" | tr -d '[:space:]')" ]; then
@@ -68,7 +68,7 @@ else
         echo "mehrere DB-slots vorhanden, aber keiner matcht den alten root."
         echo "manuell entscheiden:"
         for d in data/*/; do
-            [ -f "$d/files.db" ] || continue
+            [ -f "$d/mediasearch.db" ] || continue
             echo "  $d  -> $(cat "$d/root.txt" 2>/dev/null | head -1)"
         done
         echo "dann root.txt im richtigen slot manuell aendern und"
@@ -97,7 +97,7 @@ echo "$SLOT/root.txt aktualisiert"
 
 echo
 echo "fertig. jetzt server neu starten:"
-echo "  ./restart_serve.sh"
+echo "  ./run.sh restart"
 echo
 echo "ACHTUNG: die in der DB gespeicherten Dateipfade sind RELATIV zum"
 echo "root, also ohne das Verzeichnisprefix. Solange die relative"

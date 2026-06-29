@@ -104,10 +104,11 @@ launch_browser() {
 }
 
 cmd_ui() {
-    # Optionales erstes Argument: medien-root. Wenn angegeben und anders
-    # als in settings.json -> change_root.sh aufrufen, damit settings.json
-    # + data/<slot>/root.txt synchron bleiben. Beim naechsten mal reicht
-    # './run.sh ui'.
+    # Optionales erstes Argument: medien-root. Wenn angegeben und anders als
+    # in settings.json, wird einfach das AKTIVE Wurzelverzeichnis umgeschaltet.
+    # Jeder Root hat seinen eigenen DB-Slot (data/<hash>) - die Tags des alten
+    # Roots bleiben erhalten, Zurueckwechseln zeigt sie wieder. Fuer einen
+    # echten Medien-UMZUG (DB an neuen Pfad mitnehmen) gibt es ./change_root.sh.
     if [ $# -ge 1 ] && [ "${1:0:1}" != "-" ]; then
         local newroot="$1"; shift
         local curroot=""
@@ -118,17 +119,28 @@ cmd_ui() {
         fi
         # Vergleich tolerant gegen trailing slash
         if [ "${curroot%/}" != "${newroot%/}" ]; then
-            echo "medien-root aendert sich:"
+            echo "medien-root wird umgeschaltet:"
             echo "  alt: ${curroot:-<leer>}"
             echo "  neu: $newroot"
-            if [ -x ./change_root.sh ]; then
-                ./change_root.sh "$newroot"
-            else
-                echo "FEHLER: ./change_root.sh nicht ausfuehrbar"
-                exit 1
-            fi
+            # settings.json atomar updaten, andere Keys erhalten.
+            python3 - "$newroot" <<'PY'
+import json, pathlib, sys
+new = sys.argv[1]
+p = pathlib.Path("settings.json")
+s = {}
+if p.exists():
+    try:
+        s = json.load(open(p))
+    except Exception:
+        s = {}
+s["root"] = new
+tmp = p.with_suffix(".json.tmp")
+tmp.write_text(json.dumps(s, indent=2, ensure_ascii=False), encoding="utf-8")
+tmp.replace(p)
+print(f"settings.json: root = {new}")
+PY
         else
-            echo "medien-root unveraendert ($curroot) - kein change_root noetig."
+            echo "medien-root unveraendert ($curroot)."
         fi
     fi
 
@@ -177,9 +189,12 @@ Commands:
   ui [root]       Web-UI starten (Default wenn kein Command angegeben)
                   Startet serve.py + oeffnet Browser (portable falls vorhanden)
                   Optional: medien-root als argument. Weicht er vom wert in
-                  settings.json ab -> change_root laeuft automatisch
-                  (settings.json + data/<slot>/root.txt werden umgebogen).
-                  Beim naechsten Mal reicht dann './run.sh ui'.
+                  settings.json ab -> das AKTIVE Wurzelverzeichnis wird
+                  umgeschaltet (settings.json 'root'). Jeder Root hat seinen
+                  eigenen DB-Slot; die Tags des alten bleiben erhalten,
+                  Zurueckwechseln zeigt sie wieder. Beim naechsten Mal reicht
+                  './run.sh ui'. Fuer einen echten Medien-UMZUG (DB an neuen
+                  Pfad mitnehmen) -> ./change_root.sh.
                   Browser-Pfad in dieser Reihenfolge:
                     browser/firefox/firefox
                     browser/*.AppImage
@@ -224,7 +239,7 @@ Commands:
 
 Beispiele:
   ./run.sh                                    # = ./run.sh ui
-  ./run.sh ui /neuer/medien/pfad              # einmaliger move + start
+  ./run.sh ui /pfad/zu/bibliothek             # Root umschalten + start
   ./run.sh restart                            # serve.py hart neu starten
   ./run.sh tag /pfad/zu/medien --limit 500
   ./run.sh dedupe /pfad/zu/medien --only image
