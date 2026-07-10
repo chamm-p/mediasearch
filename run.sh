@@ -37,10 +37,16 @@ if [ ! -d .venv ]; then
         .venv/bin/pip install -r requirements.txt
     fi
 fi
-source .venv/bin/activate
+# venv-Python IMMER per absolutem Pfad aufrufen - NICHT 'source activate' + 'python'.
+# Grund (das wiederkehrende Problem): nach einem Ordner-Move zeigt der in
+# .venv/bin/activate hartkodierte VIRTUAL_ENV-Pfad auf das ALTE Verzeichnis.
+# Das prependet ein nicht-existentes dir an PATH, danach ist 'python' nicht
+# auffindbar (viele Systeme haben nur 'python3') -> "exec python: nicht gefunden".
+# .venv/bin/python funktioniert dagegen auch nach einem Move ohne Neubau.
+PY="$HERE/.venv/bin/python"
 
 read_port() {
-    .venv/bin/python -c "import tomllib; \
+    "$PY" -c "import tomllib; \
         print(tomllib.load(open('config.toml','rb'))['serve'].get('port', 8765))" \
         2>/dev/null || echo 8765
 }
@@ -176,7 +182,7 @@ PY
 
     echo "starte serve.py (Strg+C zum Beenden)"
     echo
-    exec python serve.py "$@"
+    exec "$PY" serve.py "$@"
 }
 
 show_help() {
@@ -278,10 +284,10 @@ cmd_restart() {
 case "${1:-ui}" in
     ui)             shift; cmd_ui "$@" ;;
     restart)        shift; cmd_restart "$@" ;;
-    serve)          shift; exec python serve.py  "$@" ;;
-    tag)            shift; exec python tag.py    "$@" ;;
-    thumbs)         shift; exec python thumbs.py "$@" ;;
-    dedupe)         shift; exec python dedupe.py "$@" ;;
+    serve)          shift; exec "$PY" serve.py  "$@" ;;
+    tag)            shift; exec "$PY" tag.py    "$@" ;;
+    thumbs)         shift; exec "$PY" thumbs.py "$@" ;;
+    dedupe)         shift; exec "$PY" dedupe.py "$@" ;;
     setup-browser)  shift; exec bash "$HERE/setup_browser.sh" "$@" ;;
     help|-h|--help) show_help ;;
     *)  echo "Unbekanntes Command: ${1}"
