@@ -34,6 +34,7 @@ def _safe(s: str) -> str:
         return s.encode("utf-8", errors="replace").decode("utf-8")
 
 from common import (
+    backup_db,
     connect,
     decode_surrogates,
     encode_surrogates,
@@ -738,6 +739,16 @@ def reset_done_to_pending(root: Path, only: str | None) -> int:
         conn.close()
 
 
+def _auto_backup(root: Path) -> None:
+    """Best-effort Tages-Backup nach einem Lauf (rotiert, 1x/Kalendertag)."""
+    try:
+        dst = backup_db(root, keep=7, daily_dedup=True)
+        if dst:
+            print(f"DB-Backup: {dst}", flush=True)
+    except Exception as e:
+        print(f"DB-Backup uebersprungen: {e}", flush=True)
+
+
 def reset_recent_to_pending(root: Path, days: float, only: str | None) -> int:
     """Setzt Files mit mtime innerhalb der letzten `days` Tage auf 'pending'
     zurueck (aus 'done'/'error'), damit sie (neu) getaggt werden. Neu erkannte
@@ -823,6 +834,7 @@ def cmd_tag(args: argparse.Namespace) -> None:
               f"(total={total} new={new} changed={changed} "
               f"moved={moved} removed={removed})", flush=True)
     if args.scan_only:
+        _auto_backup(root)
         print("scan-only Modus, beende.", flush=True)
         return
 
@@ -916,6 +928,7 @@ def cmd_tag(args: argparse.Namespace) -> None:
                     fid2, rel2, kind2 = nxt
                     in_flight.add(ex.submit(tag_one, root, fid2, rel2, kind2, pool, syn))
     print(f"Finished. done={done} errors={errors} total_time={(time.time()-t0)/60:.1f}min")
+    _auto_backup(root)
 
 
 def build_parser() -> argparse.ArgumentParser:

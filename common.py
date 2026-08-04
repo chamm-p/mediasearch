@@ -362,6 +362,79 @@ def optimize_db(root: Path) -> dict:
             "sort_keys_filled": reindexed}
 
 
+# ---------- Backup / Integritaet / Reparatur ----------
+
+def backups_dir(root: Path) -> Path:
+    return root_slot(root) / "backups"
+
+
+def integrity_check(root: Path) -> tuple[bool, str]:
+    """PRAGMA integrity_check. (ok?, detail). Faengt auch 'file is not a
+    database'/malformed ab, die schon beim Verbinden knallen koennen."""
+    p = db_path(root)
+    if not p.is_file():
+        return False, "DB-Datei existiert nicht"
+    try:
+        conn = sqlite3.connect(p, timeout=10)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+    try:
+        rows = conn.execute("PRAGMA integrity_check").fetchall()
+        msgs = [r[0] for r in rows]
+        ok = (len(msgs) == 1 and msgs[0] == "ok")
+        return ok, "; ".join(msgs)[:500] if msgs else "ok"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+    finally:
+        conn.close()
+
+
+def list_backups(root: Path) -> list[Path]:
+    bdir = backups_dir(root)
+    if not bdir.is_dir():
+        return []
+    return sorted(bdir.glob("mediasearch-*.db"))
+
+
+def backup_db(root: Path, keep: int = 7, daily_dedup: bool = True) -> Path | None:
+    """Konsistentes Backup der DB via SQLite Online-Backup-API (funktioniert
+    auch waehrend WAL-Betrieb). Standard: ein Backup pro Kalendertag,
+    Rotation auf die letzten `keep` Backups. Gibt den Backup-Pfad zurueck
+    (oder None, wenn keine DB da ist)."""
+    import datetime as _dt
+    src = db_path(root)
+    if not src.is_file():
+        return None
+    bdir = backups_dir(root)
+    bdir.mkdir(parents=True, exist_ok=True)
+    if daily_dedup:
+        dst = bdir / f"mediasearch-{_dt.datetime.now():%Y%m%d}.db"
+        if dst.exists():
+            return dst  # heute schon gesichert
+    else:
+        dst = bdir / f"mediasearch-{_dt.datetime.now():%Y%m%d-%H%M%S}.db"
+    tmp = dst.with_suffix(".db.tmp")
+    srcconn = sqlite3.connect(src, timeout=30)
+    try:
+        dstconn = sqlite3.connect(tmp)
+        try:
+            srcconn.backup(dstconn)
+        finally:
+            dstconn.close()
+    finally:
+        srcconn.close()
+    tmp.replace(dst)
+    # Rotation
+    if keep > 0:
+        backups = list_backups(root)
+        for old in backups[:-keep]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    return dst
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

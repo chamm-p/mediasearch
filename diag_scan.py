@@ -118,6 +118,15 @@ def main() -> None:
 
     dbp_sel = db_path(root)
     print(f"\nAktiver DB-Slot: {dbp_sel}")
+    # Integritaet: eine korrupte DB kann 'nichts neues' oder falsche Zahlen
+    # verursachen - deshalb hier gleich mitpruefen.
+    try:
+        ok_int, det_int = common.integrity_check(root)
+        print(f"DB-Integritaet: {'OK' if ok_int else 'DEFEKT'} ({det_int})")
+        if not ok_int:
+            print("  -> DB ist beschaedigt! ./run.sh db-repair  (oder ./run.sh db-restore)")
+    except Exception as e:
+        print(f"DB-Integritaet: pruefung fehlgeschlagen ({e})")
     print("Alle DB-Slots unter data/:")
     _slot_inventory(dbp_sel)
 

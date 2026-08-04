@@ -253,6 +253,14 @@ Commands:
                   nicht erkannte Endungen oder DB-/Root-Probleme auf.
                   Ohne Argument: Root aus settings.json.
 
+  db-check   [root]          DB-Integritaet pruefen + Backups auflisten
+  db-backup  [root]          manuelles DB-Backup (data/<slot>/backups/)
+  db-repair  [root]          korrupte DB best-effort reparieren
+                             (sichert die defekte DB vorher weg)
+  db-restore [root] [datei]  aus Backup wiederherstellen (ohne datei: neuestes)
+                  Auto-Backup laeuft nach jedem Tagging-Lauf und 1x/Tag beim
+                  Server-Start; Rotation auf die letzten 7 Tages-Backups.
+
   setup-browser   Laedt einen portablen Browser nach browser/
                     (kein Argument)  -> Firefox-Tarball (~80 MB, GTK)
                     --chromium       -> ungoogled-chromium AppImage (~200 MB,
@@ -307,6 +315,10 @@ case "${1:-ui}" in
     thumbs)         shift; exec "$PY" thumbs.py "$@" ;;
     dedupe)         shift; exec "$PY" dedupe.py "$@" ;;
     diag)           shift; exec "$PY" diag_scan.py "$@" ;;
+    db-check)       shift; exec "$PY" dbtools.py check   "$@" ;;
+    db-backup)      shift; exec "$PY" dbtools.py backup  "$@" ;;
+    db-repair)      shift; exec "$PY" dbtools.py repair  "$@" ;;
+    db-restore)     shift; exec "$PY" dbtools.py restore "$@" ;;
     setup-browser)  shift; exec bash "$HERE/setup_browser.sh" "$@" ;;
     help|-h|--help) show_help ;;
     *)  echo "Unbekanntes Command: ${1}"
