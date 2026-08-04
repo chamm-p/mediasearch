@@ -611,6 +611,12 @@ def api_viewed(payload: dict) -> dict:
 def index() -> HTMLResponse:
     return HTMLResponse((HERE / "index.html").read_text(encoding="utf-8"))
 
+@app.get("/api/ping")
+def api_ping() -> dict:
+    """Superleichter Liveness-Check (keine DB) - fuer run.sh, damit der
+    Browser-Start nicht an einem langsamen /api/stats auf grosser DB haengt."""
+    return {"ok": True}
+
 @app.get("/api/settings")
 def api_get_settings() -> dict:
     s = load_settings()
@@ -1775,15 +1781,25 @@ def main() -> None:
     if args.root:
         s = load_settings(); s["root"] = str(Path(args.root).expanduser().resolve())
         save_settings(s)
-    # init_db einmalig pro Root, falls schon konfiguriert
-    r = current_root()
-    if r:
-        logger.info("DB-Slot: %s", db_path(r))
-        old_legacy = r / ".mediasearch"
-        if old_legacy.exists():
-            logger.info("Hinweis: legacy %s kann geloescht werden "
-                        "(neue DB liegt unter %s)",
-                        old_legacy, DATA_DIR)
+    # DB-Warmup (init_db, ggf. Migration + Index-Bau) im HINTERGRUND, damit
+    # uvicorn SOFORT bindet. Sonst blockiert der erste Start nach einer
+    # Schema-Aenderung auf grosser Bibliothek minutenlang, bevor der Port
+    # ueberhaupt antwortet - und der Browser-Opener laeuft in die Timeout.
+    # init_db ist idempotent + gelockt; der erste Datenrequest wartet ggf.
+    # kurz, aber der Server ist ab Sekunde 1 erreichbar (/api/ping, UI).
+    def _db_warmup() -> None:
+        try:
+            r = current_root()
+            if r:
+                logger.info("DB-Slot: %s", db_path(r))
+                old_legacy = r / ".mediasearch"
+                if old_legacy.exists():
+                    logger.info("Hinweis: legacy %s kann geloescht werden "
+                                "(neue DB liegt unter %s)", old_legacy, DATA_DIR)
+                logger.info("DB-Warmup fertig")
+        except Exception as e:
+            logger.warning("DB-Warmup fehlgeschlagen: %s", e)
+    threading.Thread(target=_db_warmup, daemon=True).start()
     print(f"open http://{host}:{port}")
     import uvicorn
     uvicorn.run(app, host=host, port=port)

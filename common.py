@@ -16,6 +16,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import threading
 import tomllib
 from pathlib import Path
 from typing import Any, Iterable
@@ -411,13 +412,26 @@ END;
 
 
 _INIT_DONE: set[str] = set()
+_INIT_LOCK = threading.Lock()
 
 
 def init_db(root: Path, force: bool = False) -> None:
-    """Idempotent. Wird pro Root-Pfad nur einmal pro Prozess wirklich ausgefuehrt."""
+    """Idempotent. Wird pro Root-Pfad nur einmal pro Prozess wirklich ausgefuehrt.
+    Gelockt, damit der Hintergrund-Warmup und ein gleichzeitiger Request nicht
+    parallel migrieren (sonst z.B. 'duplicate column' bei ALTER TABLE)."""
     key = str(root)
     if key in _INIT_DONE and not force:
         return
+    with _INIT_LOCK:
+        # Double-Check: waehrend wir auf den Lock warteten, kann ein anderer
+        # Thread die Migration bereits abgeschlossen haben.
+        if key in _INIT_DONE and not force:
+            return
+        _init_db_locked(root, force)
+
+
+def _init_db_locked(root: Path, force: bool = False) -> None:
+    key = str(root)
     conn = connect(root)
     try:
         conn.executescript(SCHEMA)

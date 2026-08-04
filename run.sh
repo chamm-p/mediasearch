@@ -159,25 +159,36 @@ PY
     echo "  Logs:  ${HERE}/mediasearch.log"
     echo "==============================================="
 
-    # Schon eine Instanz auf dem Port? Dann nur Browser oeffnen, keine zweite
-    # serve.py starten (Tagger laeuft ggf. dort weiter).
-    if curl -sf -m 1 "${url}/api/stats" >/dev/null 2>&1; then
+    # Liveness ueber /api/ping pruefen - superleicht, KEINE DB. (Frueher
+    # /api/stats: auf grosser Bibliothek langsam -> -m 1 lief in die Timeout,
+    # run.sh hielt den Server faelschlich fuer tot und startete eine zweite
+    # Instanz -> Port-Konflikt -> gar kein Browser.)
+    if curl -sf -m 3 "${url}/api/ping" >/dev/null 2>&1; then
         echo "serve.py laeuft bereits auf ${url} - oeffne nur den Browser."
-        echo "(Falls du wirklich neu starten willst: 'pkill -f serve.py' und nochmal)"
+        echo "(Falls du wirklich neu starten willst: './run.sh restart')"
         launch_browser "$url"
         exit 0
     fi
 
-    # Sonst: starten und Browser nach kurzer Wartezeit aufmachen
+    # Sonst: starten und Browser aufmachen, sobald der Server antwortet.
+    # Grosszuegiges Fenster (bis ~180s): der DB-Warmup laeuft zwar im
+    # Hintergrund, aber uvicorn + erster Bind koennen auf grossen Libs kurz
+    # dauern. Server ist ab dem ersten ping erreichbar, auch waehrend die DB
+    # noch migriert.
     (
-        for _ in $(seq 1 60); do
-            if curl -sf -m 1 "${url}/api/stats" >/dev/null 2>&1; then
+        opened=0
+        for _ in $(seq 1 180); do
+            if curl -sf -m 2 "${url}/api/ping" >/dev/null 2>&1; then
                 launch_browser "$url"
-                exit 0
+                opened=1
+                break
             fi
-            sleep 0.5
+            sleep 1
         done
-        echo "Browser-Opener: Port hat in 30s nicht geantwortet, oeffne nicht."
+        if [ "$opened" -eq 0 ]; then
+            echo "Browser-Opener: Server hat in 180s nicht geantwortet - oeffne nicht."
+            echo "  Falls der Port belegt ist (haengender serve.py): './run.sh restart'"
+        fi
     ) &
 
     echo "starte serve.py (Strg+C zum Beenden)"
