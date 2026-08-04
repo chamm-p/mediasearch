@@ -231,6 +231,8 @@ Commands:
                     --workers N             parallele LLM-Calls
                     --retry-errors          Fehlerhafte Files nochmal probieren
                     --retag                 alle 'done'-Files neu taggen
+                    --since-days N          Files der letzten N Tage (mtime)
+                                            neu taggen (done/error -> pending)
                     --only image|video      nur ein Typ
                     --no-scan               Filesystem-Scan ueberspringen
                     --scan-only             nur Scan, kein LLM-Tagging

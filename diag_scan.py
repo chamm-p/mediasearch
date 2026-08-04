@@ -19,21 +19,52 @@ from collections import Counter
 from pathlib import Path
 
 import common
-from common import db_path, encode_surrogates, media_type
+from common import DATA_DIR, db_path, encode_surrogates, media_type
 
 
-def _root_from_args_or_settings() -> Path | None:
+def _raw_root() -> str | None:
     if len(sys.argv) > 1 and sys.argv[1].strip():
-        return Path(sys.argv[1]).expanduser()
+        return sys.argv[1].strip()
     sp = Path(__file__).resolve().parent / "settings.json"
     if sp.is_file():
         try:
             r = (json.loads(sp.read_text(encoding="utf-8")).get("root") or "").strip()
             if r:
-                return Path(r).expanduser()
+                return r
         except Exception:
             pass
     return None
+
+
+def _slot_inventory(selected_db: Path) -> None:
+    """Listet ALLE DB-Slots unter data/ mit root.txt + Zeilenzahl. Deckt auf,
+    wenn nach Root-Umschalten mehrere Slots existieren und der Scan/die UI in
+    einen anderen schreibt/liest als erwartet."""
+    if not DATA_DIR.is_dir():
+        print("  (kein data/-Verzeichnis)")
+        return
+    slots = sorted(d for d in DATA_DIR.iterdir()
+                   if d.is_dir() and (d / common.DB_NAME).is_file())
+    if not slots:
+        print("  (keine DB-Slots gefunden)")
+        return
+    for d in slots:
+        rt = ""
+        rtp = d / "root.txt"
+        if rtp.is_file():
+            try:
+                rt = rtp.read_text(encoding="utf-8").strip()
+            except OSError:
+                rt = "<unlesbar>"
+        try:
+            conn = sqlite3.connect(d / common.DB_NAME)
+            n = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            conn.close()
+        except Exception:
+            n = "?"
+        mark = "  <-- AKTIV (Scan+UI schreiben/lesen hier)" \
+            if (d / common.DB_NAME).resolve() == selected_db.resolve() else ""
+        print(f"  {d.name}: {n} Files  root.txt={rt or '<leer>'}{mark}")
 
 
 def _walk_media(root: Path, followlinks: bool) -> tuple[set[str], Counter]:
@@ -66,25 +97,38 @@ def _walk_media(root: Path, followlinks: bool) -> tuple[set[str], Counter]:
 
 
 def main() -> None:
-    root = _root_from_args_or_settings()
-    if root is None:
+    raw = _raw_root()
+    if raw is None:
         print("FEHLER: kein Root gefunden (settings.json ohne 'root' und kein Argument).")
         print("Aufruf: ./run.sh diag /pfad/zu/medien")
         sys.exit(1)
+    # WICHTIG: exakt wie der Tagger/Server aufloesen (expanduser + resolve),
+    # sonst liest diag evtl. einen ANDEREN DB-Slot als der Scan schreibt.
+    root = Path(raw).expanduser().resolve()
+
+    print(f"Root (settings-string): {raw}")
+    print(f"Root (aufgeloest)     : {root}")
+    if str(Path(raw).expanduser()) != str(root):
+        print("  [i] settings-string und aufgeloester Pfad unterscheiden sich")
+        print("      (Symlink/trailing slash/relativ) - das kann Slot-Verwirrung geben.")
     if not root.is_dir():
-        print(f"FEHLER: Root ist kein Verzeichnis / nicht erreichbar: {root}")
+        print(f"\nFEHLER: Root ist kein Verzeichnis / nicht erreichbar: {root}")
         print("(Mount aktiv? Pfad korrekt? -> genau DAS koennte schon das Problem sein.)")
         sys.exit(1)
 
-    print(f"Root: {root}")
-    print("scanne Dateisystem (kann bei grossen Sammlungen kurz dauern)...\n")
+    dbp_sel = db_path(root)
+    print(f"\nAktiver DB-Slot: {dbp_sel}")
+    print("Alle DB-Slots unter data/:")
+    _slot_inventory(dbp_sel)
+
+    print("\nscanne Dateisystem (kann bei grossen Sammlungen kurz dauern)...\n")
 
     media_nolink, unrec = _walk_media(root, followlinks=False)
     media_link, _ = _walk_media(root, followlinks=True)
     n_no, n_yes = len(media_nolink), len(media_link)
 
-    # DB-Stand
-    dbp = db_path(root)
+    # DB-Stand (derselbe Slot wie oben ermittelt)
+    dbp = dbp_sel
     db_rel: set[str] = set()
     status_counts: dict[str, int] = {}
     if dbp.is_file():
@@ -123,13 +167,17 @@ def main() -> None:
         for ext, c in unrec.most_common(15):
             print(f"      {ext or '(ohne endung)'}: {c}")
 
-    # 3) sichtbar aber nicht in DB
+    # 3) sichtbar aber nicht in DB  -> genau der 114-Fall
     if missing_in_db:
-        print(f"\n[!] {len(missing_in_db)} sichtbare Medien fehlen in der DB.")
-        print("    Ein Re-Scan SOLLTE die finden. Wenn nicht: lief der Scan evtl. gegen")
-        print("    einen anderen Root, oder es ist ein Rechte-/Encoding-Problem. Beispiele:")
+        print(f"\n[!] {len(missing_in_db)} sichtbare Medien fehlen im AKTIVEN DB-Slot.")
+        print("    Ein Scan gegen genau diesen Root/Slot WUERDE sie einfuegen. Beispiele:")
         for ex in list(missing_in_db)[:10]:
             print(f"      {ex}")
+        print("\n    -> Direkt vom Terminal scannen+taggen (umgeht die UI-Rescan-Kette):")
+        print(f'         ./run.sh tag "{root}"')
+        print("       (fuegt die fehlenden als pending ein und taggt sie sofort).")
+        print("    Falls die Zahl oben pro Slot verteilt ist: der Scan/die UI nutzt")
+        print("    evtl. einen anderen Slot als gedacht (siehe Slot-Liste oben).")
 
     # Unverarbeitete Files (haeufigster Fall: abgebrochener Lauf)
     n_pending    = status_counts.get("pending", 0)

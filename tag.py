@@ -738,6 +738,27 @@ def reset_done_to_pending(root: Path, only: str | None) -> int:
         conn.close()
 
 
+def reset_recent_to_pending(root: Path, days: float, only: str | None) -> int:
+    """Setzt Files mit mtime innerhalb der letzten `days` Tage auf 'pending'
+    zurueck (aus 'done'/'error'), damit sie (neu) getaggt werden. Neu erkannte
+    Files sind nach discover ohnehin pending; das hier ist fuer bereits
+    erfasste, aber noch ungetaggte oder aelter getaggte."""
+    cutoff = time.time() - days * 86400
+    conn = connect(root)
+    try:
+        sql = ("UPDATE files SET status='pending', tagged_at=0 "
+               "WHERE mtime >= ? AND status IN ('done','error')")
+        params: list = [cutoff]
+        if only in ("image", "video"):
+            sql += " AND type=?"
+            params.append(only)
+        cur = conn.execute(sql, params)
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 def build_endpoint_specs(args: argparse.Namespace, llm_cfg: dict) -> list[dict]:
     """Liefert Liste {endpoint, model, api_key, label}.
     Praezedenz: CLI-Endpoint > [[llm.endpoints]] > [llm]."""
@@ -809,6 +830,11 @@ def cmd_tag(args: argparse.Namespace) -> None:
         n = reset_done_to_pending(root, args.only)
         print(f"Re-Tag: {n} Files auf pending zurueckgesetzt"
               f"{' (nur ' + args.only + ')' if args.only else ''}")
+
+    if getattr(args, "since_days", None):
+        n = reset_recent_to_pending(root, args.since_days, args.only)
+        print(f"Since-Days: {n} Files der letzten {args.since_days} Tage "
+              f"(nach mtime) auf pending gesetzt")
 
     pending = fetch_pending(root, limit, retry_errors, args.only)
     if not pending:
@@ -907,6 +933,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Also retry files with status=error")
     p.add_argument("--retag", action="store_true",
                    help="Setzt bereits getaggte Files auf pending zurueck")
+    p.add_argument("--since-days", type=float, default=None,
+                   help="Files der letzten N Tage (nach mtime) neu taggen "
+                        "(setzt done/error -> pending)")
     p.add_argument("--only", choices=["image", "video"], default=None,
                    help="Restrict to one media type")
     p.add_argument("--no-scan", action="store_true",
