@@ -114,6 +114,16 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 Defaults fuer LLM-Endpoint(s), Tag-Optionen, Server-Host/Port. Mehrere
 Endpoints werden automatisch nach Geschwindigkeit verteilt.
 
+Zusaetzliche Datei-Endungen ohne Code-Aenderung (ueberlebt `git pull`):
+```toml
+[media]
+extra_image_exts = [".dng", ".cr2", ".nef", ".arw"]
+extra_video_exts = [".mts", ".m2ts", ".mpo"]
+```
+Danach `./run.sh tag <root>` (Re-Scan) - die neuen Files werden erkannt.
+Videos gehen ueber ffmpeg (meist ok); RAW-Bilder werden erkannt, brauchen
+zum Taggen aber ggf. zusaetzliche Bibliotheken (PIL dekodiert nicht jedes RAW).
+
 ### `synonyms.json`
 Mappt z.B. `schiff/dampfer/yacht` → `boot`. Wird beim Tagging und bei der
 Re-Normalisierung (UI-Button) angewendet.

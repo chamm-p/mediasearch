@@ -172,7 +172,9 @@ def main() -> None:
     # 2) nicht erkannte Endungen
     if unrec:
         print("\nNicht erkannte Datei-Endungen (top 15) - falls dein neues Format dabei ist,")
-        print("wird es uebersprungen und muss zu IMAGE_EXTS/VIDEO_EXTS ergaenzt werden:")
+        print("in config.toml unter [media] ergaenzen (dann Re-Scan):")
+        print('   [media]')
+        print('   extra_image_exts = [".dng"]   # bzw. extra_video_exts = [".mts"]')
         for ext, c in unrec.most_common(15):
             print(f"      {ext or '(ohne endung)'}: {c}")
 

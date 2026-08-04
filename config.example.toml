@@ -32,6 +32,16 @@ retry_errors  = false
 host = "127.0.0.1"          # 0.0.0.0 fuer LAN-Zugriff (kein Auth - vorsicht!)
 port = 8765
 
+# --- Zusaetzliche Datei-Endungen ---
+# Werden zu den eingebauten dazugenommen (kleinschreibung, Punkt optional).
+# Nuetzlich fuer Camcorder-/RAW-/Sonderformate, die per Default fehlen.
+# Hinweis: Videos gehen ueber ffmpeg (fast alles ok). RAW-Bilder (.dng/.cr2/
+# .nef/.arw...) werden zwar erkannt+gescannt, brauchen zum TAGGEN aber ggf.
+# zusaetzliche Bibliotheken (PIL kann viele RAWs nicht direkt dekodieren).
+[media]
+# extra_image_exts = [".dng", ".cr2", ".nef", ".arw", ".rw2", ".orf", ".jfif"]
+# extra_video_exts = [".mts", ".m2ts", ".mpo", ".ogv", ".m2v", ".divx"]
+
 # --- Externe Viewer ---
 # Kommando fuer Klick auf Bild / Video. Leer = xdg-open (System-Default).
 # Beispiele: "qiv -f", "feh --fullscreen", "eog -f", "mpv --fs"

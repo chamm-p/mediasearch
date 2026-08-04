@@ -247,6 +247,37 @@ def root_slot(root: Path) -> Path:
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".tif", ".heic", ".heif", ".avif"}
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv", ".m4v", ".mpg", ".mpeg", ".ts", ".3gp"}
 
+
+def _merge_extra_exts() -> None:
+    """Zusaetzliche Datei-Endungen aus config.toml [media] uebernehmen, damit
+    man neue Formate ohne Code-Aenderung ergaenzen kann (ueberlebt git pull,
+    da config.toml gitignored ist):
+
+        [media]
+        extra_image_exts = [".dng", ".cr2", ".nef", ".arw"]
+        extra_video_exts = [".mts", ".m2ts", ".mpo"]
+    """
+    try:
+        media = load_config().get("media", {}) or {}
+    except Exception:
+        return
+
+    def _norm(lst) -> set[str]:
+        out: set[str] = set()
+        for e in lst or []:
+            e = str(e).strip().lower()
+            if e and not e.startswith("."):
+                e = "." + e
+            if e:
+                out.add(e)
+        return out
+
+    IMAGE_EXTS.update(_norm(media.get("extra_image_exts")))
+    VIDEO_EXTS.update(_norm(media.get("extra_video_exts")))
+
+
+_merge_extra_exts()
+
 DB_NAME = "mediasearch.db"
 THUMB_SIZE = (240, 240)
 THUMB_QUALITY = 72   # JPEG-Qualitaet 1-95
