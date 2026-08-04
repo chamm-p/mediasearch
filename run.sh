@@ -254,6 +254,10 @@ Commands:
                   Ohne Argument: Root aus settings.json.
 
   backup     [root]          DB jetzt sichern (= db-backup)
+  fix-videos [root]          Videos mit Tagging-Fehler per ffmpeg reparieren
+                    (Trockenlauf; --apply ersetzt Originale mit Backup,
+                     --no-reencode nur Remux, --all alle Videos, --limit N)
+
   db-check   [root]          DB-Integritaet pruefen + Backups auflisten
   db-backup  [root]          manuelles DB-Backup (data/<slot>/backups/)
   db-repair  [root]          korrupte DB best-effort reparieren
@@ -317,6 +321,7 @@ case "${1:-ui}" in
     thumbs)         shift; exec "$PY" thumbs.py "$@" ;;
     dedupe)         shift; exec "$PY" dedupe.py "$@" ;;
     diag)           shift; exec "$PY" diag_scan.py "$@" ;;
+    fix-videos)     shift; exec "$PY" fixvideos.py "$@" ;;
     db-check)       shift; exec "$PY" dbtools.py check   "$@" ;;
     backup)         shift; exec "$PY" dbtools.py backup  "$@" ;;
     db-backup)      shift; exec "$PY" dbtools.py backup  "$@" ;;

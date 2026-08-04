@@ -615,32 +615,42 @@ def video_duration(path: Path) -> float:
 
 
 def extract_video_frame(path: Path, timestamp: float) -> bytes | None:
-    """Return JPEG bytes of frame at given timestamp."""
-    try:
-        out = subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-ss", f"{timestamp:.2f}",
-             "-i", str(path), "-frames:v", "1",
-             "-vf", "scale='min(1024,iw)':-2",
-             "-f", "image2", "-vcodec", "mjpeg", "-"],
-            capture_output=True, timeout=60,
-        )
-        if out.returncode == 0 and out.stdout:
-            return out.stdout
-    except Exception:
-        pass
+    """Return JPEG bytes of frame at given timestamp. Fehlertolerant:
+    ignoriert Stream-Fehler (-err_detect ignore_err), generiert Timestamps
+    neu (-fflags +genpts) und faellt von schnellem Input-Seek auf Output-Seek
+    zurueck (dekodiert von vorn - robuster bei kaputtem Index/moov)."""
+    base = ["ffmpeg", "-loglevel", "error",
+            "-err_detect", "ignore_err", "-fflags", "+genpts"]
+    tail = ["-frames:v", "1", "-vf", "scale='min(1024,iw)':-2",
+            "-f", "image2", "-vcodec", "mjpeg", "-"]
+    attempts = (
+        base + ["-ss", f"{timestamp:.2f}", "-i", str(path)] + tail,   # Input-Seek (schnell)
+        base + ["-i", str(path), "-ss", f"{timestamp:.2f}"] + tail,   # Output-Seek (robust)
+    )
+    for cmd in attempts:
+        try:
+            out = subprocess.run(cmd, capture_output=True, timeout=90)
+            if out.returncode == 0 and out.stdout:
+                return out.stdout
+        except Exception:
+            pass
     return None
 
 
 def video_frames_for_tagging(path: Path) -> list[bytes]:
-    """Extract two frames: middle of first half, middle of second half."""
+    """Extract two frames: middle of first half, middle of second half.
+    Mit Fallbacks, wenn die bevorzugten Zeitpunkte nichts liefern."""
     dur = video_duration(path)
-    if dur <= 0:
-        # fallback: try at 0 and 1 seconds
-        frames = [extract_video_frame(path, 0.0), extract_video_frame(path, 1.0)]
-    else:
-        frames = [extract_video_frame(path, dur * 0.25),
-                  extract_video_frame(path, dur * 0.75)]
-    return [f for f in frames if f]
+    cand = [dur * 0.25, dur * 0.75] if dur > 0 else [0.0, 1.0]
+    frames = [f for f in (extract_video_frame(path, t) for t in cand) if f]
+    if not frames:
+        # letzter Versuch: irgendein lesbarer Frame ganz am Anfang
+        for t in (0.0, 0.5, 2.0):
+            f = extract_video_frame(path, t)
+            if f:
+                frames.append(f)
+                break
+    return frames
 
 
 def make_thumb_image(path: Path, dst: Path) -> bool:
