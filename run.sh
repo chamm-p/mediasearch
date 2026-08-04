@@ -253,13 +253,15 @@ Commands:
                   nicht erkannte Endungen oder DB-/Root-Probleme auf.
                   Ohne Argument: Root aus settings.json.
 
+  backup     [root]          DB jetzt sichern (= db-backup)
   db-check   [root]          DB-Integritaet pruefen + Backups auflisten
   db-backup  [root]          manuelles DB-Backup (data/<slot>/backups/)
   db-repair  [root]          korrupte DB best-effort reparieren
                              (sichert die defekte DB vorher weg)
   db-restore [root] [datei]  aus Backup wiederherstellen (ohne datei: neuestes)
-                  Auto-Backup laeuft nach jedem Tagging-Lauf und 1x/Tag beim
-                  Server-Start; Rotation auf die letzten 7 Tages-Backups.
+                  Auto-Backup laeuft nach jedem Tagging-Lauf, der die DB
+                  veraendert hat (Rotation: letzte 10). Eine korrupte DB wird
+                  NIE gesichert (Integritaets-Check vorher).
 
   setup-browser   Laedt einen portablen Browser nach browser/
                     (kein Argument)  -> Firefox-Tarball (~80 MB, GTK)
@@ -316,6 +318,7 @@ case "${1:-ui}" in
     dedupe)         shift; exec "$PY" dedupe.py "$@" ;;
     diag)           shift; exec "$PY" diag_scan.py "$@" ;;
     db-check)       shift; exec "$PY" dbtools.py check   "$@" ;;
+    backup)         shift; exec "$PY" dbtools.py backup  "$@" ;;
     db-backup)      shift; exec "$PY" dbtools.py backup  "$@" ;;
     db-repair)      shift; exec "$PY" dbtools.py repair  "$@" ;;
     db-restore)     shift; exec "$PY" dbtools.py restore "$@" ;;

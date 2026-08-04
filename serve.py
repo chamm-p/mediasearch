@@ -612,14 +612,6 @@ def _startup_warmup() -> None:
                     logger.info("Hinweis: legacy %s kann geloescht werden "
                                 "(neue DB liegt unter %s)", old_legacy, DATA_DIR)
                 logger.info("DB-Warmup fertig")
-                # Tages-Backup (1x/Kalendertag, rotiert) - best-effort.
-                try:
-                    from common import backup_db
-                    dst = backup_db(r, keep=7, daily_dedup=True)
-                    if dst:
-                        logger.info("DB-Tagesbackup: %s", dst)
-                except Exception as e:
-                    logger.warning("DB-Tagesbackup uebersprungen: %s", e)
         except Exception as e:
             _WARMUP_ERROR = _exc_msg(e)
             logger.warning("DB-Warmup fehlgeschlagen: %s", _WARMUP_ERROR)

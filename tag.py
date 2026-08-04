@@ -37,6 +37,7 @@ from common import (
     backup_db,
     connect,
     decode_surrogates,
+    integrity_check,
     encode_surrogates,
     fill_sort_keys,
     find_context,
@@ -740,9 +741,16 @@ def reset_done_to_pending(root: Path, only: str | None) -> int:
 
 
 def _auto_backup(root: Path) -> None:
-    """Best-effort Tages-Backup nach einem Lauf (rotiert, 1x/Kalendertag)."""
+    """Backup nach einem Lauf, der die DB veraendert hat. Sichert NIE eine
+    korrupte DB (sonst wertloses Backup + Rotation koennte gutes verdraengen).
+    Jeder geaenderte Lauf -> eigenes timestamped Backup, Rotation keep=10."""
     try:
-        dst = backup_db(root, keep=7, daily_dedup=True)
+        ok, det = integrity_check(root, quick=True)
+        if not ok:
+            print(f"WARNUNG: DB defekt ({det[:80]}) - Backup UEBERSPRUNGEN. "
+                  f"Bitte ./run.sh db-repair oder ./run.sh db-restore", flush=True)
+            return
+        dst = backup_db(root, keep=10, daily_dedup=False)
         if dst:
             print(f"DB-Backup: {dst}", flush=True)
     except Exception as e:
@@ -827,14 +835,19 @@ def cmd_tag(args: argparse.Namespace) -> None:
 
     print(f"tag.py gestartet, root={root}", flush=True)
     print(f"prompt: {_PROMPT_SRC} ({len(PROMPT)} zeichen)", flush=True)
+    new = changed = moved = removed = 0
     if not args.no_scan:
         t_scan = time.time()
         new, changed, moved, removed, total = discover(root)
         print(f"Scan fertig in {time.time()-t_scan:.1f}s "
               f"(total={total} new={new} changed={changed} "
               f"moved={moved} removed={removed})", flush=True)
+    fs_changed = new + changed + moved + removed
     if args.scan_only:
-        _auto_backup(root)
+        if fs_changed:
+            _auto_backup(root)
+        else:
+            print("keine Aenderungen - kein Backup noetig.", flush=True)
         print("scan-only Modus, beende.", flush=True)
         return
 
@@ -928,7 +941,11 @@ def cmd_tag(args: argparse.Namespace) -> None:
                     fid2, rel2, kind2 = nxt
                     in_flight.add(ex.submit(tag_one, root, fid2, rel2, kind2, pool, syn))
     print(f"Finished. done={done} errors={errors} total_time={(time.time()-t0)/60:.1f}min")
-    _auto_backup(root)
+    # Backup nur wenn dieser Lauf die DB tatsaechlich veraendert hat.
+    if fs_changed or done:
+        _auto_backup(root)
+    else:
+        print("keine Aenderungen - kein Backup noetig.", flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -368,9 +368,11 @@ def backups_dir(root: Path) -> Path:
     return root_slot(root) / "backups"
 
 
-def integrity_check(root: Path) -> tuple[bool, str]:
-    """PRAGMA integrity_check. (ok?, detail). Faengt auch 'file is not a
-    database'/malformed ab, die schon beim Verbinden knallen koennen."""
+def integrity_check(root: Path, quick: bool = False) -> tuple[bool, str]:
+    """PRAGMA (quick_)integrity_check. (ok?, detail). Faengt auch 'file is not
+    a database'/malformed ab, die schon beim Verbinden knallen koennen.
+    quick=True nutzt PRAGMA quick_check (deutlich schneller, faengt die
+    haeufigen Korruptionen; gut als Vor-Backup-Guard)."""
     p = db_path(root)
     if not p.is_file():
         return False, "DB-Datei existiert nicht"
@@ -379,7 +381,8 @@ def integrity_check(root: Path) -> tuple[bool, str]:
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
     try:
-        rows = conn.execute("PRAGMA integrity_check").fetchall()
+        pragma = "quick_check" if quick else "integrity_check"
+        rows = conn.execute(f"PRAGMA {pragma}").fetchall()
         msgs = [r[0] for r in rows]
         ok = (len(msgs) == 1 and msgs[0] == "ok")
         return ok, "; ".join(msgs)[:500] if msgs else "ok"
@@ -404,6 +407,11 @@ def backup_db(root: Path, keep: int = 7, daily_dedup: bool = True) -> Path | Non
     import datetime as _dt
     src = db_path(root)
     if not src.is_file():
+        return None
+    # GUARD: niemals eine korrupte DB sichern - sonst wuerde ein wertloses
+    # Backup angelegt und die Rotation koennte ein gutes altes verdraengen.
+    ok, _det = integrity_check(root, quick=True)
+    if not ok:
         return None
     bdir = backups_dir(root)
     bdir.mkdir(parents=True, exist_ok=True)
