@@ -246,6 +246,11 @@ Commands:
                     --only image|video      nur ein Typ
                   Anschliessend im UI: Setup -> 'Doubletten' anklicken
 
+  diag [root]     Diagnose: warum findet der Re-Scan neue Files nicht?
+                  Vergleicht Dateisystem mit DB und deckt Symlink-Ordner,
+                  nicht erkannte Endungen oder DB-/Root-Probleme auf.
+                  Ohne Argument: Root aus settings.json.
+
   setup-browser   Laedt einen portablen Browser nach browser/
                     (kein Argument)  -> Firefox-Tarball (~80 MB, GTK)
                     --chromium       -> ungoogled-chromium AppImage (~200 MB,
@@ -299,6 +304,7 @@ case "${1:-ui}" in
     tag)            shift; exec "$PY" tag.py    "$@" ;;
     thumbs)         shift; exec "$PY" thumbs.py "$@" ;;
     dedupe)         shift; exec "$PY" dedupe.py "$@" ;;
+    diag)           shift; exec "$PY" diag_scan.py "$@" ;;
     setup-browser)  shift; exec bash "$HERE/setup_browser.sh" "$@" ;;
     help|-h|--help) show_help ;;
     *)  echo "Unbekanntes Command: ${1}"
