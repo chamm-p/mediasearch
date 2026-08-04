@@ -594,6 +594,30 @@ def _shutdown_players() -> None:
         pass
 
 
+@app.on_event("startup")
+def _startup_warmup() -> None:
+    """DB-Warmup (init_db, ggf. Migration + Index-Bau) im HINTERGRUND-Thread,
+    damit der Server sofort erreichbar ist. Haengt am App-Lifecycle - laeuft
+    also unter 'python serve.py' UND 'uvicorn serve:app'. Der erste
+    DB-Request wartet ggf. kurz auf den init_db-Lock; /api/ping und
+    /api/warmup bleiben derweil antwortbereit (keine DB)."""
+    def _run() -> None:
+        global _WARMUP_ERROR
+        try:
+            r = current_root()
+            if r:
+                logger.info("DB-Slot: %s", db_path(r))
+                old_legacy = r / ".mediasearch"
+                if old_legacy.exists():
+                    logger.info("Hinweis: legacy %s kann geloescht werden "
+                                "(neue DB liegt unter %s)", old_legacy, DATA_DIR)
+                logger.info("DB-Warmup fertig")
+        except Exception as e:
+            _WARMUP_ERROR = _exc_msg(e)
+            logger.warning("DB-Warmup fehlgeschlagen: %s", _WARMUP_ERROR)
+    threading.Thread(target=_run, daemon=True).start()
+
+
 @app.post("/api/viewed")
 def api_viewed(payload: dict) -> dict:
     """Vermerkt fuer die uebergebenen IDs, dass sie angezeigt wurden
@@ -616,6 +640,32 @@ def api_ping() -> dict:
     """Superleichter Liveness-Check (keine DB) - fuer run.sh, damit der
     Browser-Start nicht an einem langsamen /api/stats auf grosser DB haengt."""
     return {"ok": True}
+
+
+# Warmup-Status: wird vom Hintergrund-Thread in main() gesetzt. Erlaubt der
+# UI, ein "Migration laeuft"-Banner zu zeigen statt beim ersten Request zu
+# haengen. None = laeuft noch/kein Fehler.
+_WARMUP_ERROR: Optional[str] = None
+
+
+@app.get("/api/warmup")
+def api_warmup() -> dict:
+    """Sagt, ob die DB des aktuellen Roots bereit ist - OHNE die Migration
+    auszuloesen (liest Root aus settings.json direkt + db_ready-Memo)."""
+    from common import db_ready
+    s = load_settings()
+    r = (s.get("root") or "").strip()
+    if not r:
+        return {"ready": True, "no_root": True}
+    p = Path(r).expanduser()
+    try:
+        p = p.resolve()
+    except Exception:
+        pass
+    if not p.is_dir():
+        # ungueltiger/nicht gemounteter Root -> es wird nichts migriert
+        return {"ready": True, "invalid_root": True, "root": str(p)}
+    return {"ready": db_ready(p), "root": str(p), "error": _WARMUP_ERROR}
 
 @app.get("/api/settings")
 def api_get_settings() -> dict:
@@ -1781,25 +1831,9 @@ def main() -> None:
     if args.root:
         s = load_settings(); s["root"] = str(Path(args.root).expanduser().resolve())
         save_settings(s)
-    # DB-Warmup (init_db, ggf. Migration + Index-Bau) im HINTERGRUND, damit
-    # uvicorn SOFORT bindet. Sonst blockiert der erste Start nach einer
-    # Schema-Aenderung auf grosser Bibliothek minutenlang, bevor der Port
-    # ueberhaupt antwortet - und der Browser-Opener laeuft in die Timeout.
-    # init_db ist idempotent + gelockt; der erste Datenrequest wartet ggf.
-    # kurz, aber der Server ist ab Sekunde 1 erreichbar (/api/ping, UI).
-    def _db_warmup() -> None:
-        try:
-            r = current_root()
-            if r:
-                logger.info("DB-Slot: %s", db_path(r))
-                old_legacy = r / ".mediasearch"
-                if old_legacy.exists():
-                    logger.info("Hinweis: legacy %s kann geloescht werden "
-                                "(neue DB liegt unter %s)", old_legacy, DATA_DIR)
-                logger.info("DB-Warmup fertig")
-        except Exception as e:
-            logger.warning("DB-Warmup fehlgeschlagen: %s", e)
-    threading.Thread(target=_db_warmup, daemon=True).start()
+    # DB-Warmup laeuft jetzt im FastAPI-startup-Event (_startup_warmup),
+    # damit er unter jedem Launcher (python serve.py ODER uvicorn serve:app)
+    # ausgefuehrt wird. Hier nur noch den Server hochfahren.
     print(f"open http://{host}:{port}")
     import uvicorn
     uvicorn.run(app, host=host, port=port)

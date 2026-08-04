@@ -163,6 +163,24 @@
 
   /* Status panel */
   /* Activity-Pille (floating) und Drawer */
+  /* Migrations-/Warmup-Banner - nicht-blockierend, unter dem Header */
+  #migrate-banner {
+    display: none; align-items: center; gap: 10px;
+    padding: 8px 16px; font-size: 0.9rem;
+    background: #3a2f12; color: #ffd479;
+    border-bottom: 1px solid #5a4a1c;
+  }
+  #migrate-banner.active { display: flex; }
+  #migrate-banner.error { background: #3a1414; color: #ff9a9a;
+    border-bottom-color: #5a1c1c; }
+  #migrate-banner .spin {
+    width: 14px; height: 14px; flex: 0 0 auto;
+    border: 2px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; animation: mb-spin 0.8s linear infinite;
+  }
+  #migrate-banner.error .spin { display: none; }
+  @keyframes mb-spin { to { transform: rotate(360deg); } }
+
   #activity-pill {
     position: fixed; right: 16px; top: 12px; z-index: 40;
     background: var(--bg-2); border: 1px solid var(--line);
@@ -457,6 +475,12 @@
     <button id="toggle-setup">Setup</button>
   </div>
 </header>
+
+<!-- Banner waehrend die DB im Hintergrund migriert/warmup laeuft -->
+<div id="migrate-banner">
+  <span class="spin"></span>
+  <span id="migrate-text">Datenbank wird vorbereitet - einen Moment...</span>
+</div>
 
 <div id="mtags">
   <span id="mtags-groups"></span>
@@ -2710,6 +2734,57 @@ $("#lora-do").addEventListener("click", async () => {
   }
 });
 
+// ---- Warmup/Migration-Banner ----
+// /api/warmup loest KEINE Migration aus (bleibt also auch antwortbereit,
+// waehrend die DB im Hintergrund migriert). Wir zeigen solange ein Banner
+// und feuern erst dann die DB-lastigen Requests (Suche/Stats/Status/Prompt),
+// damit die nicht am Migrations-Lock haengen.
+function _showMigrateBanner() {
+  const b = $("#migrate-banner");
+  b.classList.remove("error"); b.classList.add("active");
+  $("#migrate-text").textContent =
+    "Datenbank wird vorbereitet (Migration/Index) - einen Moment...";
+}
+function _showMigrateError(err) {
+  const b = $("#migrate-banner");
+  b.classList.add("active", "error");
+  $("#migrate-text").textContent =
+    "DB-Vorbereitung fehlgeschlagen: " + err + " (siehe mediasearch.log)";
+}
+// Blendet das Banner im Hintergrund aus, sobald warmup ready meldet.
+// Wird als Fallback benutzt, wenn wir nach maxWaitMs nicht mehr gaten wollen.
+function watchBannerUntilReady() {
+  const iv = setInterval(async () => {
+    let w; try { w = await fetch("/api/warmup").then(r => r.json()); } catch { return; }
+    if (w.error) { _showMigrateError(w.error); clearInterval(iv); return; }
+    if (w.ready) { $("#migrate-banner").classList.remove("active"); clearInterval(iv); }
+  }, 1500);
+}
+// Wartet, bis die DB bereit ist (zeigt bei Bedarf das Banner). Gibt nach
+// maxWaitMs trotzdem auf ('timeout'), damit die UI nie ewig blockiert - der
+// erste Request initialisiert die DB dann notfalls lazy, und ein
+// Hintergrund-Watcher blendet das Banner aus.
+async function pollWarmupUntilReady(maxWaitMs = 30000) {
+  const banner = $("#migrate-banner");
+  const start = Date.now();
+  let graceShown = false;
+  const graceTimer = setTimeout(() => { graceShown = true; }, 500);
+  while (true) {
+    let w;
+    try { w = await fetch("/api/warmup").then(r => r.json()); }
+    catch { w = { ready: false }; }
+    if (w.error) { clearTimeout(graceTimer); _showMigrateError(w.error); return "error"; }
+    if (w.ready) { clearTimeout(graceTimer); banner.classList.remove("active"); return "ready"; }
+    if (graceShown) _showMigrateBanner();
+    if (Date.now() - start > maxWaitMs) {
+      clearTimeout(graceTimer);
+      watchBannerUntilReady();   // Banner-Ausblenden im Hintergrund weiterfuehren
+      return "timeout";
+    }
+    await new Promise(r => setTimeout(r, 800));
+  }
+}
+
 // ---- Init ----
 (async () => {
   await loadSettings();
@@ -2717,13 +2792,19 @@ $("#lora-do").addEventListener("click", async () => {
   if (!s.root) $("#setup").classList.add("active");  // open setup if no root yet
   _lastPageSize = computePageSize();
   loadUiState();   // letzte Sortierung / Typ-Filter aus localStorage
-  loadStats(); loadStatus(); loadLog(); loadManualTags(); loadPrompt();
+  // DB-freie Sachen sofort (JSON-Configs, Tagger-Log):
+  loadManualTags();
+  loadLog(); setInterval(loadLog, 1500);
+
+  // Auf Warmup warten (zeigt bei Bedarf das Banner), dann erst DB-Requests.
+  await pollWarmupUntilReady();
+
+  loadStats(); loadStatus(); loadPrompt();
   // Initial search + blur, damit Pfeiltasten sofort die Seitenwahl steuern
   // (Suchfeld hat autofocus, sonst wuerde -> die Cursor-Position bewegen).
   await search();
   $("#q").blur();
   setInterval(loadStatus, 2000);
-  setInterval(loadLog, 1500);
   setInterval(loadStats, 5000);
 })();
 </script>

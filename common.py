@@ -430,6 +430,13 @@ def init_db(root: Path, force: bool = False) -> None:
         _init_db_locked(root, force)
 
 
+def db_ready(root: Path) -> bool:
+    """True, wenn init_db fuer diesen Root bereits durchgelaufen ist.
+    Liest nur den Memo-Set - loest KEINE Migration aus (im Gegensatz zu
+    init_db/current_root), damit ein Status-Poll nicht blockiert."""
+    return str(root) in _INIT_DONE
+
+
 def _init_db_locked(root: Path, force: bool = False) -> None:
     key = str(root)
     conn = connect(root)
