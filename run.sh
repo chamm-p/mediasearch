@@ -45,6 +45,20 @@ fi
 # .venv/bin/python funktioniert dagegen auch nach einem Move ohne Neubau.
 PY="$HERE/.venv/bin/python"
 
+# Selbstheilung: Kern-Abhaengigkeiten wirklich vorhanden? Ein halb gebautes
+# venv (Python da, Pakete fehlen -> "No module named fastapi") oder geaenderte
+# requirements.txt wird hier erkannt und nachinstalliert. '$PY -m pip' statt
+# '.venv/bin/pip', damit kein stale-shebang-Problem auftritt.
+if ! "$PY" -c "import fastapi, uvicorn, PIL" 2>/dev/null; then
+    echo "Python-Abhaengigkeiten fehlen/unvollstaendig - installiere aus requirements.txt ..."
+    if [ -d vendor ] && compgen -G "vendor/*.whl" >/dev/null; then
+        echo "vendor/ gefunden - installiere offline aus lokalen wheels..."
+        "$PY" -m pip install --no-index --find-links vendor -r requirements.txt
+    else
+        "$PY" -m pip install -r requirements.txt
+    fi
+fi
+
 read_port() {
     "$PY" -c "import tomllib; \
         print(tomllib.load(open('config.toml','rb'))['serve'].get('port', 8765))" \
