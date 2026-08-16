@@ -1491,14 +1491,30 @@ def serve_file(file_id: int):
     return FileResponse(p)
 
 def _mpv_extra_args() -> list[str]:
-    """Gemeinsame mpv-Zusatzargs: unser Lua-Script (Rotation + WB-Hotkeys)
-    plus der Pfad zu den WB-GPU-Shadern via script-opts (Taste w)."""
+    """Gemeinsame mpv-Zusatzargs: unser Lua-Script (Rotation + WB-Hotkeys),
+    der Pfad zu den WB-GPU-Shadern und der WB-Default (Taste w schaltet um).
+
+    config.toml:
+        [media]
+        video_wb = "mittel"      # aus | mittel | stark
+        mpv_vo   = "gpu"         # optional: Video-Ausgang erzwingen
+                                 # (x11/xv/gpu/gpu-next) - hilft bei
+                                 # 'swapchain'-Fehlern auf manchen Treibern
+    """
     args: list[str] = []
     mpv_dir = (HERE / "mpv").resolve()
     rotate_script = mpv_dir / "rotate.lua"
+    media_cfg = (load_config().get("media", {}) or {})
     if rotate_script.is_file():
+        wb = str(media_cfg.get("video_wb", "mittel")).strip().lower()
+        if wb not in ("aus", "mittel", "stark"):
+            wb = "mittel"
         args.append(f"--script={rotate_script}")
-        args.append(f"--script-opts=wbdir={mpv_dir}")
+        # script-opts als EIN Argument, kommasepariert
+        args.append(f"--script-opts=wbdir={mpv_dir},wbdefault={wb}")
+    vo = str(media_cfg.get("mpv_vo", "")).strip()
+    if vo:
+        args.append(f"--vo={vo}")
     return args
 
 

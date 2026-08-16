@@ -23,18 +23,28 @@ end)
 -- Feste Korrektur auf der GPU (glsl-shader) statt CPU-Filter: laeuft auch bei
 -- 4K fluessig, weil die Hardware-Dekodierung erhalten bleibt (ein CPU-Filter
 -- wuerde jedes Frame ueber die CPU ziehen -> Ruckeln bei hoher Aufloesung).
--- Start = mittel (an by default - passt fuer nahezu alles). Taste w schaltet
--- weiter: mittel -> stark -> aus -> mittel ...
--- Die Shader senken Rot leicht und heben Blau (luminanz-erhaltend) und
--- neutralisieren so den warmen Gelbstich.
--- wbdir kommt per --script-opts=wbdir=... vom Server (Pfad zum mpv/-Ordner).
-local wbdir = (mp.get_opt and mp.get_opt("wbdir")) or nil
+-- Weissabgleich gegen Gelbstich. Default 'mittel' (per config.toml
+-- [media] video_wb aenderbar: aus | mittel | stark). Taste w schaltet
+-- zyklisch weiter. Die Shader senken Rot leicht und heben Blau
+-- (luminanz-erhaltend) und neutralisieren so den warmen Gelbstich.
+--
+-- WICHTIG (Swapchain-Problem): das Setzen von glsl-shaders zwingt mpv, die
+-- Render-Pipeline neu aufzubauen. Passiert das ZU FRUEH (beim Script-Laden,
+-- bevor der Video-Ausgang steht), scheitert auf manchen GPUs/Treibern die
+-- Swapchain-Erstellung und mpv beendet sich sofort. Deshalb wird der Default
+-- erst angewendet, wenn die Wiedergabe laeuft (file-loaded/playback-restart).
+-- wbdir + wbdefault kommen per --script-opts=... vom Server.
+local wbdir     = (mp.get_opt and mp.get_opt("wbdir")) or nil
+local wbdefault = (mp.get_opt and mp.get_opt("wbdefault")) or "mittel"
 local wb_levels = {
+    {name = "aus",    file = nil},
     {name = "mittel", file = "wb_mittel.glsl"},
     {name = "stark",  file = "wb_stark.glsl"},
-    {name = "aus",    file = nil},
 }
-local wb_idx = 1
+local wb_idx = 1                       -- Fallback: aus
+for i, l in ipairs(wb_levels) do
+    if l.name == wbdefault then wb_idx = i end
+end
 
 local function apply_wb(silent)
     local lvl = wb_levels[wb_idx]
@@ -61,7 +71,25 @@ mp.add_forced_key_binding("w", "wb-cycle", function()
     apply_wb()
 end)
 
--- Default beim Laden setzen: mittel (sofern Shader-Pfad bekannt).
-if wbdir then
-    apply_wb(true)
+-- Default NICHT sofort setzen, sondern erst wenn die Wiedergabe steht.
+-- Sonst kann der Swapchain-Neuaufbau beim Start fehlschlagen und mpv
+-- beendet sich (schwarzes Blinken). 'playback-restart' feuert, wenn der
+-- erste Frame gerendert wurde - ab da ist der Video-Ausgang bereit.
+local wb_applied = false
+local function apply_default_once()
+    if wb_applied or not wbdir then return end
+    wb_applied = true
+    if wb_levels[wb_idx].file == nil then return end   -- 'aus' -> nichts tun
+    -- kleiner Aufschub, damit der vo wirklich fertig initialisiert ist
+    mp.add_timeout(0.3, function()
+        local ok = pcall(function()
+            mp.set_property("glsl-shaders", wbdir .. "/" .. wb_levels[wb_idx].file)
+        end)
+        if not ok then
+            wb_idx = 1   -- auf 'aus' zurueckfallen, Wiedergabe hat Vorrang
+            mp.osd_message("Weissabgleich konnte nicht aktiviert werden", 2)
+        end
+    end)
 end
+mp.register_event("playback-restart", apply_default_once)
+mp.register_event("file-loaded", apply_default_once)

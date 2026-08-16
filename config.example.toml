@@ -42,6 +42,15 @@ port = 8765
 # extra_image_exts = [".dng", ".cr2", ".nef", ".arw", ".rw2", ".orf", ".jfif"]
 # extra_video_exts = [".mts", ".m2ts", ".mpo", ".ogv", ".m2v", ".divx"]
 
+# Weissabgleich gegen Gelbstich im Video-Player (Taste w schaltet um):
+#   "mittel" (default) | "stark" | "aus"
+# video_wb = "mittel"
+
+# Video-Ausgang fuer mpv erzwingen. Nur noetig, wenn mpv sofort schliesst
+# ("swapchain"-Fehler o.ae.) - dann z.B. "x11", "xv", "gpu" oder "gpu-next"
+# probieren. Leer/auskommentiert = mpv entscheidet selbst.
+# mpv_vo = "x11"
+
 # --- Externe Viewer ---
 # Kommando fuer Klick auf Bild / Video. Leer = xdg-open (System-Default).
 # Beispiele: "qiv -f", "feh --fullscreen", "eog -f", "mpv --fs"
