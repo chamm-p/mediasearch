@@ -554,8 +554,23 @@ class PlayerManager:
                 for e in self.entries:
                     if e["fg"] and e["proc"].poll() is None:
                         self._terminate(e["proc"])
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL)
+            # Player-stderr in mpv.log mitschreiben, damit man sieht WARUM ein
+            # Player (z.B. mpv) sofort wieder schliesst - vorher ging das nach
+            # /dev/null und der Fehler war unsichtbar.
+            errf = subprocess.DEVNULL
+            try:
+                logp = HERE / "mpv.log"
+                errf = open(logp, "a", buffering=1)
+                errf.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} launch: "
+                           f"{' '.join(cmd)} ===\n")
+                errf.flush()
+            except Exception:
+                errf = subprocess.DEVNULL
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf)
+            # Eltern-Handle schliessen (das Kind hat eine eigene Kopie).
+            if errf is not subprocess.DEVNULL:
+                try: errf.close()
+                except Exception: pass
             self.entries.append({"proc": proc, "file_id": file_id,
                                  "started": time.time(), "track": track,
                                  "fg": foreground})

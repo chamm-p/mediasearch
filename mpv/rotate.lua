@@ -38,11 +38,15 @@ local wb_idx = 1
 
 local function apply_wb(silent)
     local lvl = wb_levels[wb_idx]
-    if lvl.file and wbdir then
-        mp.set_property("glsl-shaders", wbdir .. "/" .. lvl.file)
-    else
-        mp.set_property("glsl-shaders", "")
-    end
+    -- defensiv: ein glsl-shaders-Fehler (vo ohne Shader-Support etc.) darf
+    -- weder das Script abbrechen noch die Wiedergabe stoeren.
+    pcall(function()
+        if lvl.file and wbdir then
+            mp.set_property("glsl-shaders", wbdir .. "/" .. lvl.file)
+        else
+            mp.set_property("glsl-shaders", "")
+        end
+    end)
     if not silent then
         mp.osd_message("Weissabgleich: " .. lvl.name, 1.5)
     end
