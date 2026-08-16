@@ -100,6 +100,7 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 | w | Weissabgleich gegen Gelbstich - Start mittel, w schaltet mittel → stark → aus (GPU-Shader, fluessig auch bei 4K) |
 | Mausrad | spulen: 5s vor/zurueck (statt Lautstaerke) |
 | Shift+Mausrad | spulen in 1s-Schritten (fein) |
+| Esc / q | Player beenden (Esc verlaesst nicht mehr nur den Vollbildmodus) |
 
 ### CLI-Befehle
 ```bash

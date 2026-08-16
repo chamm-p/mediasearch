@@ -3,7 +3,7 @@
 -- mpv ruft on_load() automatisch auf wenn das Script geladen ist.
 
 mp.osd_message("mediasearch: b/n drehen, B reset, w Weissabgleich, "
-               .. "Mausrad spult (Shift = fein)", 3)
+               .. "Mausrad spult (Shift = fein), ESC beendet", 3)
 
 local function rotate_by(delta)
     local cur = mp.get_property_number("video-rotate", 0) or 0
@@ -18,6 +18,14 @@ mp.add_forced_key_binding("n", "rotate-ccw", function() rotate_by(-90) end)
 mp.add_forced_key_binding("B", "rotate-reset", function()
     mp.set_property("video-rotate", 0)
     mp.osd_message("Rotation: 0 Grad", 1.5)
+end)
+
+-- ---- ESC beendet den Player (nicht nur Fullscreen verlassen) ----
+-- mpv-Default: ESC = Fullscreen aus. Hier auf 'quit' gelegt, passend zur
+-- Bedienung "V/Klick startet, ESC beendet" (und zur Nutzungsdauer-Messung).
+-- q bleibt wie gewohnt zusaetzlich erhalten.
+mp.add_forced_key_binding("ESC", "quit-on-esc", function()
+    mp.commandv("quit")
 end)
 
 -- ---- Mausrad = SPULEN statt Lautstaerke ----
