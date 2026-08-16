@@ -2,7 +2,8 @@
 -- Wird via --script=... beim mpv-Start geladen.
 -- mpv ruft on_load() automatisch auf wenn das Script geladen ist.
 
-mp.osd_message("mediasearch: b/n drehen, B reset, w Weissabgleich", 3)
+mp.osd_message("mediasearch: b/n drehen, B reset, w Weissabgleich, "
+               .. "Mausrad spult (Shift = fein)", 3)
 
 local function rotate_by(delta)
     local cur = mp.get_property_number("video-rotate", 0) or 0
@@ -18,6 +19,28 @@ mp.add_forced_key_binding("B", "rotate-reset", function()
     mp.set_property("video-rotate", 0)
     mp.osd_message("Rotation: 0 Grad", 1.5)
 end)
+
+-- ---- Mausrad = SPULEN statt Lautstaerke ----
+-- mpv legt das Rad per Default auf volume up/down. Hier umgebogen:
+--   Rad hoch/runter        = 5s vor/zurueck
+--   Shift + Rad            = 1s (Feinsprung)
+-- 'exact' sucht framegenau statt nur zum Keyframe.
+local function seek_by(sec)
+    mp.commandv("seek", tostring(sec), "relative", "exact")
+end
+
+local function bind_wheel(key, name, sec)
+    -- add_forced_key_binding ueberschreibt die Default-Bindung (volume).
+    mp.add_forced_key_binding(key, name, function() seek_by(sec) end)
+end
+
+bind_wheel("WHEEL_UP",         "seek-fwd",        5)
+bind_wheel("WHEEL_DOWN",       "seek-back",      -5)
+bind_wheel("Shift+WHEEL_UP",   "seek-fwd-fine",   1)
+bind_wheel("Shift+WHEEL_DOWN", "seek-back-fine", -1)
+-- Aeltere mpv-Versionen/Backends melden das Rad als MOUSE_BTN3/4:
+bind_wheel("MOUSE_BTN3",       "seek-fwd-legacy",   5)
+bind_wheel("MOUSE_BTN4",       "seek-back-legacy", -5)
 
 -- ---- Weissabgleich gegen Gelbstich (Taste w) ----
 -- Feste Korrektur auf der GPU (glsl-shader) statt CPU-Filter: laeuft auch bei
