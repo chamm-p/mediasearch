@@ -46,10 +46,13 @@ port = 8765
 #   "mittel" (default) | "stark" | "aus"
 # video_wb = "mittel"
 
-# Video-Ausgang fuer mpv erzwingen. Nur noetig, wenn mpv sofort schliesst
-# ("swapchain"-Fehler o.ae.) - dann z.B. "x11", "xv", "gpu" oder "gpu-next"
-# probieren. Leer/auskommentiert = mpv entscheidet selbst.
-# mpv_vo = "x11"
+# Video-Ausgang + GPU-Kontext fuer mpv. Defaults: vo=gpu, context=x11egl.
+# x11egl vermeidet den "swapchain"-Fehler, der auf vielen Linux/Treiber-
+# Kombis auftritt, sobald ein glsl-shader (Weissabgleich) aktiv wird -
+# mpv wuerde sonst sofort wieder schliessen.
+# Nur aendern, wenn noetig ("" = Option ganz weglassen, mpv entscheidet):
+# mpv_vo          = "gpu"        # gpu | gpu-next | x11 | xv | ""
+# mpv_gpu_context = "x11egl"     # x11egl | x11 | wayland | drm | ""
 
 # --- Externe Viewer ---
 # Kommando fuer Klick auf Bild / Video. Leer = xdg-open (System-Default).

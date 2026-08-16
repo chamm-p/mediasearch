@@ -1496,10 +1496,10 @@ def _mpv_extra_args() -> list[str]:
 
     config.toml:
         [media]
-        video_wb = "mittel"      # aus | mittel | stark
-        mpv_vo   = "gpu"         # optional: Video-Ausgang erzwingen
-                                 # (x11/xv/gpu/gpu-next) - hilft bei
-                                 # 'swapchain'-Fehlern auf manchen Treibern
+        video_wb        = "mittel"   # aus | mittel | stark
+        mpv_vo          = "gpu"      # Video-Ausgang (leer = mpv entscheidet)
+        mpv_gpu_context = "x11egl"   # GPU-Kontext; x11egl vermeidet den
+                                     # 'swapchain'-Fehler vieler Treiber
     """
     args: list[str] = []
     mpv_dir = (HERE / "mpv").resolve()
@@ -1512,9 +1512,16 @@ def _mpv_extra_args() -> list[str]:
         args.append(f"--script={rotate_script}")
         # script-opts als EIN Argument, kommasepariert
         args.append(f"--script-opts=wbdir={mpv_dir},wbdefault={wb}")
-    vo = str(media_cfg.get("mpv_vo", "")).strip()
+    # Default: --vo=gpu --gpu-context=x11egl. Ohne x11egl scheitert auf
+    # etlichen Linux/Treiber-Kombis die Swapchain-Erstellung, sobald ein
+    # glsl-shader (unser Weissabgleich) aktiv wird -> mpv beendet sich sofort.
+    # Beides per config.toml ueberschreibbar; leerer Wert = Option weglassen.
+    vo = str(media_cfg.get("mpv_vo", "gpu")).strip()
+    ctx = str(media_cfg.get("mpv_gpu_context", "x11egl")).strip()
     if vo:
         args.append(f"--vo={vo}")
+    if ctx:
+        args.append(f"--gpu-context={ctx}")
     return args
 
 
