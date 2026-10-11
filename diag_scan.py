@@ -22,8 +22,31 @@ import common
 from common import DATA_DIR, db_path, encode_surrogates, media_type
 
 
+HELP = """./run.sh diag [root]
+
+Diagnose: warum findet der Re-Scan meine neuen Files nicht?
+
+Vergleicht das Dateisystem mit der Datenbank und zeigt:
+  - aufgeloesten Root + ALLE DB-Slots unter data/ (welcher ist aktiv?)
+  - DB-Integritaet (eine korrupte DB kann falsche Zahlen verursachen)
+  - Medien in SYMLINK-Unterordnern (die der Scan per Default auslaesst)
+  - nicht erkannte Datei-Endungen (-> config.toml [media] ergaenzen)
+  - sichtbare Medien, die in der DB fehlen (+ Terminal-Befehl zum Einlesen)
+  - DB-Status (pending/processing/error/done) und was dann zu tun ist
+
+Ohne Argument wird der Root aus settings.json genommen.
+
+Beispiele:
+  ./run.sh diag                    aktuelles Wurzelverzeichnis pruefen
+  ./run.sh diag /pfad/zu/medien    anderes Verzeichnis pruefen
+"""
+
+
 def _raw_root() -> str | None:
     if len(sys.argv) > 1 and sys.argv[1].strip():
+        if sys.argv[1] in ("-h", "--help", "help"):
+            print(HELP)
+            sys.exit(0)
         return sys.argv[1].strip()
     sp = Path(__file__).resolve().parent / "settings.json"
     if sp.is_file():

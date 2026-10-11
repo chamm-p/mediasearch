@@ -251,8 +251,31 @@ def cmd_restore(root: Path) -> None:
     print("-> ./run.sh restart, dann pruefen. Ggf. './run.sh tag <root>' fuer Neues.")
 
 
+HELP = """DB-Wartung fuer mediasearch
+
+  ./run.sh db-check   [root]              Integritaet pruefen + Backups auflisten
+  ./run.sh backup     [root]              DB jetzt sichern (= db-backup)
+  ./run.sh db-repair  [root]              korrupte DB best-effort reparieren
+  ./run.sh db-restore [root] [backup.db]  aus Backup wiederherstellen
+                                          (ohne Datei: neuestes Backup)
+
+Backups liegen unter data/<slot>/backups/ und entstehen automatisch nach
+jedem Tagging-Lauf, der die DB veraendert hat (Rotation: letzte 10).
+Eine korrupte DB wird NIE gesichert (Integritaets-Check vorher).
+
+db-repair sichert die defekte DB vorher weg, versucht dann sqlite3
+'.recover' und als Fallback ein zeilenweises Retten in eine frische DB.
+db-restore sichert die aktuelle DB ebenfalls vorher weg.
+
+Ohne [root] wird das Wurzelverzeichnis aus settings.json genommen.
+"""
+
+
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
+    if cmd in ("-h", "--help", "help"):
+        print(HELP)
+        sys.exit(0)
     root = _root()
     if cmd == "check":     cmd_check(root)
     elif cmd == "backup":  cmd_backup(root)

@@ -341,14 +341,45 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Videos verlustarm komprimieren mit QS + Platz-Ueberwachung")
-    ap.add_argument("root", nargs="?", default=None)
+        prog="./run.sh convert",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Videos verlustarm komprimieren (H.265/AV1) mit technischer QS\n"
+            "und Platz-Ueberwachung. Rekursiv ab dem Wurzelverzeichnis."),
+        epilog="""
+Ablauf je Video: encode -> QS -> Original wegraeumen -> DB aktualisieren.
+Die QS prueft VOR dem Loeschen: abspielbar, Frame dekodierbar, Laenge wie
+Original, Audio erhalten, Aufloesung gleich, Ergebnis kleiner. Scheitert
+eine Pruefung, bleibt das Original unangetastet.
+
+Beispiele:
+  ./run.sh convert                     Trockenlauf: was waere zu tun? (aendert nichts)
+  ./run.sh convert --apply             konvertieren, Originale in den Papierkorb
+  ./run.sh convert --apply --limit 5   erst 5 Videos probieren (empfohlen zum Start)
+  ./run.sh convert --apply --delete    Originale sofort loeschen (kein Papierkorb)
+  ./run.sh convert --apply --codec av1 AV1 statt H.265 (kleiner, aber viel langsamer)
+  ./run.sh convert --empty-trash       Papierkorb endgueltig loeschen (Platz frei)
+  ./run.sh convert --apply --reserve-gb 25
+                                       frueher pausieren (mehr Platz-Puffer)
+
+Platzmangel: faellt der freie Platz unter --reserve-gb, haelt der Lauf an.
+Dann Papierkorb pruefen, '--empty-trash', und den Lauf neu starten -
+bereits konvertierte Videos werden uebersprungen.
+
+Protokoll: jeder Lauf schreibt convert-report-<zeit>.log mit allen Dateien
+nach Grund gruppiert (nicht lesbar / bereits effizient / zu klein / QS
+nicht bestanden / konvertiert).
+""")
+    ap.add_argument("root", nargs="?", default=None,
+                    help="Wurzelverzeichnis (default: aus settings.json)")
     ap.add_argument("--apply", action="store_true",
                     help="wirklich konvertieren (sonst nur Trockenlauf)")
     ap.add_argument("--delete", action="store_true",
                     help="Original nach erfolgreicher QS SOFORT loeschen "
                          "(statt in den Papierkorb zu verschieben)")
-    ap.add_argument("--codec", choices=["hevc", "av1"], default="hevc")
+    ap.add_argument("--codec", choices=["hevc", "av1"], default="hevc",
+                    help="Video-Codec (default hevc = H.265: schneller, "
+                         "ueberall abspielbar; av1 = kleiner, viel langsamer)")
     ap.add_argument("--crf", type=int, default=None,
                     help="Qualitaet (hevc default 21, av1 default 30); "
                          "kleiner = besser/groesser")
@@ -361,7 +392,9 @@ def main() -> None:
     ap.add_argument("--skip-codecs", default="hevc,h265,av1",
                     help="schon effizient kodierte ueberspringen "
                          "(default hevc,h265,av1; '' = nichts ueberspringen)")
-    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--limit", type=int, default=None,
+                    help="nur die ersten N Videos bearbeiten "
+                         "(zum Antesten empfohlen)")
     ap.add_argument("--tol-sec", type=float, default=0.5,
                     help="erlaubte Laengen-Abweichung in s (default 0.5)")
     ap.add_argument("--log", default=None,
