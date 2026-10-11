@@ -32,7 +32,9 @@ import time
 from pathlib import Path
 
 import common
-from common import connect, db_path, decode_surrogates
+from common import (connect, db_path, decode_surrogates,
+                    extract_video_frame, root_slot, thumb_path,
+                    video_duration)
 
 HERE = Path(__file__).resolve().parent
 TRASH_NAME = ".mediasearch-converted-originals"   # auch in common.EXCLUDE_DIRS!
@@ -48,6 +50,7 @@ R_ENCODE     = "encode fehlgeschlagen"  # ffmpeg-Fehler
 R_QS         = "QS nicht bestanden"     # Laenge/Audio/Aufloesung/groesser
 R_REPLACE    = "ersetzen fehlgeschlagen"
 R_LIMIT      = "nicht bearbeitet (--limit)"
+R_NOGAIN     = "bringt nichts (gemerkt)"   # frueher schon: nicht kleiner
 R_DRYRUN     = "wuerde konvertiert"
 
 
@@ -75,7 +78,7 @@ class Report:
         if self.path is None:
             return None
         order = [R_UNREADABLE, R_QS, R_ENCODE, R_REPLACE, R_ALREADY,
-                 R_TOO_SMALL, R_LIMIT, R_DRYRUN, R_OK]
+                 R_NOGAIN, R_TOO_SMALL, R_LIMIT, R_DRYRUN, R_OK]
         by: dict[str, list[tuple[str, str]]] = {}
         for reason, rel, detail in self.rows:
             by.setdefault(reason, []).append((rel, detail))
@@ -102,6 +105,14 @@ class Report:
                         f.write("Diese Dateien konnte kein Decoder oeffnen "
                                 "(alte Formate wie flv/rm, oder defekt).\n"
                                 "-> Reparaturversuch: ./run.sh fix-videos\n\n")
+                    elif reason == R_NOGAIN:
+                        f.write("Beim letzten Versuch wurde das Ergebnis NICHT "
+                                "kleiner (schon sparsam kodiert, verrauscht\n"
+                                "oder sehr kurz). Gemerkt in convert-skip.json, "
+                                "damit sie nicht jedes Mal\nneu durch den "
+                                "Encoder laufen. Erneut probieren:\n"
+                                "  ./run.sh convert --apply --retry-nogain "
+                                "--crf 28\n\n")
                     elif reason == R_ALREADY:
                         f.write("Schon effizient kodiert (hevc/av1) - "
                                 "absichtlich uebersprungen, erneutes Encoden\n"
@@ -137,6 +148,51 @@ def resolve_root(cli: str | None) -> Path:
         print(f"FEHLER: Wurzelverzeichnis nicht erreichbar: {p}")
         sys.exit(1)
     return p
+
+
+# --- Merkliste fuer "bringt nichts"-Videos -----------------------------------
+# Videos, bei denen die Konvertierung zwar technisch klappt, das Ergebnis aber
+# NICHT kleiner wird (schon sparsam kodiert, stark verrauscht, sehr kurz),
+# wuerden bei jedem Lauf erneut durch den Encoder laufen - fuer ein absehbares
+# Ergebnis. Deshalb merken wir sie pro Medien-Root in einer JSON-Datei im
+# Daten-Slot (neben DB/Backups) und ueberspringen sie kuenftig.
+#
+# Der Schluessel enthaelt Groesse+mtime: aendert sich die Datei (neu
+# aufgenommen, ersetzt), gilt der Eintrag nicht mehr und es wird neu probiert.
+SKIP_FILE = "convert-skip.json"
+
+
+def _skip_path(root: Path) -> Path:
+    return root_slot(root) / SKIP_FILE
+
+
+def load_skiplist(root: Path) -> dict:
+    p = _skip_path(root)
+    if not p.is_file():
+        return {}
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_skiplist(root: Path, data: dict) -> None:
+    p = _skip_path(root)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False),
+                       encoding="utf-8")
+        tmp.replace(p)
+    except OSError as e:
+        print(f"WARNUNG: Merkliste nicht speicherbar: {e}")
+
+
+def skip_key(rel: str, size: int, mtime: float) -> str:
+    """rel + Groesse + mtime(sekundengenau). Aendert sich die Datei,
+    passt der Schluessel nicht mehr -> erneuter Versuch."""
+    return f"{rel}|{size}|{int(mtime)}"
 
 
 # ---------- ffprobe / Medien-Infos ----------
@@ -223,6 +279,23 @@ ENCODERS: dict[str, dict] = {
         # Kompromiss, p7 = langsamer/kleiner. -tag:v hvc1 fuer Kompatibilitaet.
         "extra": ["-rc", "vbr", "-b:v", "0", "-pix_fmt", "yuv420p",
                   "-tag:v", "hvc1"],
+    },
+    "av1nvenc": {       # NVIDIA AV1 - nur RTX 40xx/Ada und neuer!
+        "vcodec": "av1_nvenc", "quality_flag": "-cq", "default_q": 28,
+        "preset": "p5", "hw": True,
+        "extra": ["-rc", "vbr", "-b:v", "0", "-pix_fmt", "yuv420p"],
+    },
+    "av1qsv": {         # Intel Arc / ab Alder Lake mit Arc-GPU
+        "vcodec": "av1_qsv", "quality_flag": "-global_quality",
+        "default_q": 28, "preset": "medium", "hw": True,
+        "extra": [],
+    },
+    "av1vaapi": {       # AMD RDNA3 / Intel Arc unter Linux
+        "vcodec": "av1_vaapi", "quality_flag": "-qp", "default_q": 28,
+        "preset": "", "hw": True,
+        "extra": [],
+        "pre_input": ["-vaapi_device", "/dev/dri/renderD128"],
+        "filter": "format=nv12,hwupload",
     },
     "vaapi": {          # Intel/AMD-GPU unter Linux
         "vcodec": "hevc_vaapi", "quality_flag": "-qp", "default_q": 24,
@@ -430,7 +503,8 @@ def db_update_converted(root: Path, rel: str, new_abs: Path,
 # ---------- Kandidaten ----------
 
 def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
-               limit: int | None, report: "Report") -> list[Path]:
+               limit: int | None, report: "Report",
+               skiplist: dict | None = None) -> list[Path]:
     """Alle Videos unter root (rekursiv), ohne Papierkorb und Temp-Reste.
     skip_codecs: bereits effizient kodierte Videos AUSSCHLIESSEN (z.B. hevc/av1
     nicht nochmal durch den Encoder schicken - das kostet nur Qualitaet).
@@ -491,6 +565,20 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
             report.add(R_TOO_SMALL, rel,
                        f"{_mb(info['size'])}, {info['vcodec']}")
             continue
+        # Frueher schon erfolglos (Ergebnis war nicht kleiner)? Dann nicht
+        # wieder encoden - der Schluessel enthaelt Groesse+mtime, bei einer
+        # geaenderten Datei wird also erneut probiert.
+        if skiplist is not None:
+            try:
+                st = p.stat()
+            except OSError:
+                st = None
+            if st is not None:
+                k = skip_key(str(p.relative_to(root)), st.st_size, st.st_mtime)
+                if k in skiplist:
+                    report.add(R_NOGAIN, rel, skiplist[k].get("why", "")[:80]
+                               if isinstance(skiplist[k], dict) else "")
+                    continue
         out.append(p)
     return out
 
@@ -526,6 +614,14 @@ Beispiele:
 Platzmangel: faellt der freie Platz unter --reserve-gb, haelt der Lauf an.
 Dann Papierkorb pruefen, '--empty-trash', und den Lauf neu starten -
 bereits konvertierte Videos werden uebersprungen.
+
+Wiederholte Laeufe: bereits konvertierte Videos sind danach HEVC/AV1 und
+werden per --skip-codecs uebersprungen - du kannst also jederzeit abbrechen
+und denselben Befehl neu starten. Videos, bei denen das Ergebnis NICHT
+kleiner wurde, landen in einer Merkliste (convert-skip.json im Daten-Slot)
+und werden kuenftig gar nicht erst encodet. Aendert sich die Datei, wird
+automatisch neu probiert. --retry-nogain probiert sie trotzdem (z.B. mit
+hoeherem --crf), --forget-nogain leert die Liste.
 
 Kaputt kodierte Dateinamen (defekte Bytes von alten Windows-Systemen)
 werden beim Konvertieren gleich mitrepariert - der DB-Pfad wandert mit,
@@ -577,6 +673,11 @@ nicht bestanden / konvertiert).
                     help="Pfad fuer das Lauf-Protokoll "
                          "(default: convert-report-<zeit>.log im Tool-Ordner; "
                          "'' = kein Log)")
+    ap.add_argument("--retry-nogain", action="store_true",
+                    help="Videos erneut probieren, die laut Merkliste nichts "
+                         "bringen (z.B. zusammen mit hoeherem --crf)")
+    ap.add_argument("--forget-nogain", action="store_true",
+                    help="Merkliste leeren und beenden")
     ap.add_argument("--no-fix-names", action="store_true",
                     help="kaputt kodierte Dateinamen NICHT mitreparieren "
                          "(Default: beim Konvertieren gleich korrigieren)")
@@ -588,14 +689,26 @@ nicht bestanden / konvertiert).
     if args.list_encoders:
         have = available_encoders()
         print("Encoder dieses ffmpeg-Builds:\n")
+        print(f"  {'--codec':<18} {'ffmpeg-Encoder':<15} {'Ergebnis':<9} "
+              f"{'Art':<13} Status")
+        print("  " + "-"*66)
         for name in sorted(ENCODERS):
             prof = ENCODERS[name]
             mark = "vorhanden" if name in have else "NICHT vorhanden"
             kind = "GPU/Hardware" if prof["hw"] else "CPU"
-            print(f"  --codec {name:<6} {prof['vcodec']:<14} {kind:<12} "
-                  f"{mark}")
+            target = "AV1" if "av1" in prof["vcodec"] else "H.265/HEVC"
+            print(f"  --codec {name:<10} {prof['vcodec']:<15} {target:<9} "
+                  f"{kind:<13} {mark}")
+        av1_hw = [n for n in ("av1nvenc", "av1qsv", "av1vaapi") if n in have]
+        if av1_hw:
+            print(f"\nAV1 auf der GPU moeglich: --codec {av1_hw[0]}")
+            print(f"  ./run.sh convert --apply --codec {av1_hw[0]} --limit 100")
+        elif "av1" in have:
+            print("\nAV1 nur ueber CPU (libsvtav1) - korrekt, aber langsam:")
+            print("  ./run.sh convert --apply --codec av1 --limit 20")
+            print("  (erst mit kleinem Limit die Dauer pro Video messen!)")
         if "nvenc" in have:
-            print("\nTipp: nvenc ist verfuegbar - deutlich schneller als hevc.")
+            print("\nH.265 auf der GPU (schnellste Variante):")
             print("  ./run.sh convert --apply --codec nvenc --limit 100")
         return
 
@@ -629,6 +742,22 @@ nicht bestanden / konvertiert).
     skip = {c.strip().lower() for c in args.skip_codecs.split(",") if c.strip()}
     skip_codecs = skip or None
 
+    # Merkliste der "bringt nichts"-Videos (pro Medien-Root im Daten-Slot)
+    if args.forget_nogain:
+        n = len(load_skiplist(root))
+        save_skiplist(root, {})
+        print(f"Merkliste geleert ({n} Eintraege). Beim naechsten Lauf werden "
+              f"diese Videos wieder probiert.")
+        return
+    skiplist = load_skiplist(root)
+    if args.retry_nogain:
+        if skiplist:
+            print(f"--retry-nogain: {len(skiplist)} gemerkte Videos werden "
+                  f"diesmal wieder probiert.")
+        skiplist_active = None
+    else:
+        skiplist_active = skiplist
+
     # Lauf-Protokoll: Default in den Tool-Ordner (nicht in die Mediathek).
     if args.log is None:
         log_path = HERE / f"convert-report-{time.strftime('%Y%m%d-%H%M%S')}.log"
@@ -653,7 +782,8 @@ nicht bestanden / konvertiert).
         print(f"Ueberspringe bereits: {', '.join(sorted(skip_codecs))}")
     print("\nsammle Videos (ffprobe pro Datei, kann dauern)...")
 
-    vids = candidates(root, skip_codecs, args.min_mb, args.limit, report)
+    vids = candidates(root, skip_codecs, args.min_mb, args.limit, report,
+                      skiplist=skiplist_active)
     pre = report.counts()
     print(f"\nKandidaten: {len(vids)}")
     if pre:
@@ -675,7 +805,7 @@ nicht bestanden / konvertiert).
             print(f"Gruende pro Datei: {written}")
         return
 
-    done = failed = skipped = db_hits = fixed_names = 0
+    done = failed = skipped = db_hits = fixed_names = nogain_new = 0
     saved = 0
     t_start = time.time()
 
@@ -753,6 +883,18 @@ nicht bestanden / konvertiert).
             failed += 1
             try: tmp.unlink()
             except OSError: pass
+            # "nicht kleiner" ist ein STABILES Ergebnis (Datei unveraendert,
+            # gleiche Einstellungen -> gleiches Resultat). Merken, damit der
+            # naechste Lauf nicht wieder umsonst encodet. Andere QS-Fehler
+            # (Laenge/Audio/Aufloesung) NICHT merken - die koennen auf einen
+            # behebbaren Fehler hindeuten.
+            if "nicht kleiner" in why:
+                st = src.stat()
+                skiplist[skip_key(rel, st.st_size, st.st_mtime)] = {
+                    "why": why, "codec": info["vcodec"],
+                    "when": time.strftime("%Y-%m-%d"),
+                }
+                nogain_new += 1
             continue
 
         new_size = tmp.stat().st_size
@@ -807,12 +949,19 @@ nicht bestanden / konvertiert).
         print(f"{label}: {_mb(info['size'])} -> {_mb(new_size)} "
               f"(-{pct:.0f}%, {time.time()-t0:.0f}s, DB {dbmsg}){renamed}")
 
+    # --- Merkliste sichern ---
+    if nogain_new:
+        save_skiplist(root, skiplist)
+
     # --- Zusammenfassung ---
     print("\n" + "-"*60)
     el = time.time() - t_start
     if args.apply:
         print(f"Fertig: {done} konvertiert, {failed} fehlgeschlagen, "
               f"{skipped} uebersprungen  ({el/60:.1f} min)")
+        if nogain_new:
+            print(f"Gemerkt als 'bringt nichts': {nogain_new} "
+                  f"(werden kuenftig uebersprungen)")
         if fixed_names:
             print(f"Dateinamen repariert: {fixed_names} "
                   f"(defekte Kodierung korrigiert, DB-Pfad mitgezogen)")

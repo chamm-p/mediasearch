@@ -280,6 +280,10 @@ Commands:
                     --crf N  --preset X  --limit N (zum Antesten, bricht
                       auch die Pruef-Phase ab)
                     --empty-trash  = Papierkorb endgueltig loeschen
+                    Wiederholbar: schon Konvertierte werden uebersprungen.
+                      Videos die NICHT kleiner wurden, landen in einer
+                      Merkliste und werden nicht neu encodet
+                      (--retry-nogain / --forget-nogain)
                     Kaputt kodierte Dateinamen werden mitrepariert
                       (DB-Pfad wandert mit) - abschaltbar via --no-fix-names
                     Schreibt ein Lauf-Protokoll (convert-report-<zeit>.log)
