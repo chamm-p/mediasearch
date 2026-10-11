@@ -62,6 +62,7 @@ class Report:
     def __init__(self, path: Path | None):
         self.path = path
         self.rows: list[tuple[str, str, str]] = []   # (grund, rel, detail)
+        self.notes: dict[str, int] = {}   # Sammeleintraege: grund -> anzahl
         self._live_started = False
         self._header: dict = {}
         self._root: Path | None = None
@@ -90,6 +91,13 @@ class Report:
         except OSError as e:
             print(f"WARNUNG: Log nicht schreibbar: {e}")
 
+    def note(self, reason: str, count: int, text: str) -> None:
+        """Sammeleintrag: zaehlt `count` Faelle, erzeugt aber nur EINE
+        Zeile. Fuer Massen-Faelle wie '--limit erreicht', wo die einzelnen
+        Dateinamen keinen Mehrwert haben."""
+        self.notes[reason] = self.notes.get(reason, 0) + count
+        self._live(reason, text, "")
+
     def _live(self, reason: str, rel: str, detail: str) -> None:
         """Eine Zeile sofort anhaengen (zeilengepuffert -> sofort sichtbar,
         auch mit 'tail -f')."""
@@ -114,6 +122,8 @@ class Report:
         out: dict[str, int] = {}
         for reason, _rel, _d in self.rows:
             out[reason] = out.get(reason, 0) + 1
+        for reason, n in self.notes.items():
+            out[reason] = out.get(reason, 0) + n
         return out
 
     @staticmethod
@@ -161,12 +171,20 @@ class Report:
                 f.write(f"\nLAUF-ENDE {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("\nZusammenfassung:\n")
                 for reason in order:
-                    n = len(by.get(reason, []))
+                    # Einzelzeilen UND Sammeleintraege zaehlen, sonst fehlt
+                    # z.B. "nicht bearbeitet (--limit)" in der Uebersicht.
+                    n = len(by.get(reason, [])) + self.notes.get(reason, 0)
                     if n:
                         f.write(f"  {reason:<24} {n}\n")
                 for reason in order:
                     items = by.get(reason)
                     if not items:
+                        # Sammeleintrag ohne Dateiliste (z.B. --limit)
+                        if self.notes.get(reason):
+                            f.write(f"\n{'='*70}\n{reason.upper()}  "
+                                    f"({self.notes[reason]})\n{'='*70}\n")
+                            f.write("  (nur als Anzahl protokolliert - die "
+                                    "Dateien kommen beim naechsten Lauf dran)\n")
                         continue
                     f.write(f"\n{'='*70}\n{reason.upper()}  ({len(items)})\n"
                             f"{'='*70}\n")
@@ -707,11 +725,16 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
         # Sonst wuerde '--limit 100' trotzdem ffprobe ueber ALLE (z.B. 5000)
         # Dateien laufen lassen - bei grossen Sammlungen minutenlang umsonst.
         if limit and len(out) >= limit:
-            for rest in found[i-1:]:
-                report.add(R_LIMIT, _safe(str(rest.relative_to(root))),
-                           "nicht geprueft (Limit erreicht)")
-            print(f"  Limit {limit} erreicht - restliche "
-                  f"{len(found) - (i-1)} Dateien nicht mehr geprueft.", flush=True)
+            # NUR EINEN Sammeleintrag - bei 20k Dateien waeren das sonst
+            # ~20k nutzlose Zeilen im Log. Die Anzahl ist die Information,
+            # die Dateinamen sind es nicht (sie kommen beim naechsten Lauf
+            # sowieso dran).
+            n_rest = len(found) - (i - 1)
+            report.note(R_LIMIT, n_rest,
+                        f"{n_rest} weitere Dateien nicht geprueft "
+                        f"(Limit {limit} erreicht)")
+            print(f"  Limit {limit} erreicht - restliche {n_rest} Dateien "
+                  f"nicht mehr geprueft.", flush=True)
             break
         rel = _safe(str(p.relative_to(root)))
         checked = i
