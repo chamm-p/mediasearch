@@ -307,7 +307,7 @@ ENCODERS: dict[str, dict] = {
         "extra": ["-pix_fmt", "yuv420p", "-tag:v", "hvc1"],
     },
     "av1": {            # CPU, kleinste Dateien, sehr langsam
-        "vcodec": "libsvtav1", "quality_flag": "-crf", "default_q": 30,
+        "vcodec": "libsvtav1", "quality_flag": "-crf", "default_q": 26,
         "preset": "6", "hw": False,
         "extra": ["-pix_fmt", "yuv420p10le", "-svtav1-params", "tune=0"],
     },
@@ -320,17 +320,17 @@ ENCODERS: dict[str, dict] = {
                   "-tag:v", "hvc1"],
     },
     "av1nvenc": {       # NVIDIA AV1 - nur RTX 40xx/Ada und neuer!
-        "vcodec": "av1_nvenc", "quality_flag": "-cq", "default_q": 28,
+        "vcodec": "av1_nvenc", "quality_flag": "-cq", "default_q": 24,
         "preset": "p5", "hw": True,
         "extra": ["-rc", "vbr", "-b:v", "0", "-pix_fmt", "yuv420p"],
     },
     "av1qsv": {         # Intel Arc / ab Alder Lake mit Arc-GPU
         "vcodec": "av1_qsv", "quality_flag": "-global_quality",
-        "default_q": 28, "preset": "medium", "hw": True,
+        "default_q": 24, "preset": "medium", "hw": True,
         "extra": [],
     },
     "av1vaapi": {       # AMD RDNA3 / Intel Arc unter Linux
-        "vcodec": "av1_vaapi", "quality_flag": "-qp", "default_q": 28,
+        "vcodec": "av1_vaapi", "quality_flag": "-qp", "default_q": 24,
         "preset": "", "hw": True,
         "extra": [],
         "pre_input": ["-vaapi_device", "/dev/dri/renderD128"],
@@ -634,6 +634,96 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
 
 # ---------- Hauptlauf ----------
 
+def cmd_restore_trash(root: Path, trash: Path, dry: bool,
+                      only: str | None) -> None:
+    """Stellt Originale aus dem Papierkorb wieder her.
+
+    Pro Original wird:
+      1) die konvertierte Datei am Zielpfad entfernt (sonst laegen beide da;
+         beachtet auch einen Container-Wechsel, z.B. film.avi -> film.mkv)
+      2) das Original zurueckverschoben
+      3) der DB-Eintrag auf das Original zurueckgesetzt (Pfad/Groesse/mtime),
+         Tags bleiben erhalten
+    """
+    if not trash.is_dir():
+        print(f"Kein Papierkorb vorhanden: {trash}")
+        return
+    originals = [p for p in trash.rglob("*") if p.is_file()]
+    if only:
+        originals = [p for p in originals if only.lower() in str(p).lower()]
+    if not originals:
+        print("Papierkorb ist leer" + (f" (Filter '{only}')" if only else ""))
+        return
+
+    print(f"Papierkorb: {trash}")
+    print(f"{len(originals)} Original(e)"
+          + (f" (Filter '{only}')" if only else "")
+          + ("  [Trockenlauf]" if dry else "  [WIEDERHERSTELLEN]"))
+    print()
+    done = skipped = 0
+    for src_bak in sorted(originals):
+        rel = str(src_bak.relative_to(trash))
+        rel_out = _safe(rel)
+        target = root / rel                      # Originalpfad
+        # Die konvertierte Datei kann eine andere Endung haben (.avi -> .mkv)
+        converted = [target] + [target.with_suffix(s)
+                                for s in sorted(MODERN_CONTAINERS)
+                                if s != target.suffix.lower()]
+        present = [c for c in converted if c.is_file() and c != src_bak]
+        if dry:
+            info = ", ".join(_safe(c.name) for c in present) or "keine"
+            print(f"  {rel_out}\n      konvertierte Datei: {info}")
+            done += 1
+            continue
+        try:
+            # 1) konvertierte Datei(en) entfernen
+            for c in present:
+                c.unlink()
+            # 2) Original zurueck
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(src_bak, target)
+        except OSError as e:
+            print(f"  {rel_out}: FEHLER {e}")
+            skipped += 1
+            continue
+        # 3) DB zurueckstellen: Eintrag kann auf die konvertierte Datei
+        #    (evtl. andere Endung) zeigen -> auf das Original umbiegen.
+        st = target.stat()
+        stored_new = common.encode_surrogates(rel)
+        conn = connect(root)
+        try:
+            row = None
+            for cand in [rel] + [str(Path(rel).with_suffix(c.suffix))
+                                 for c in present]:
+                row = conn.execute("SELECT id FROM files WHERE rel_path=?",
+                                   (common.encode_surrogates(cand),)).fetchone()
+                if row:
+                    break
+            if row:
+                conn.execute(
+                    "UPDATE files SET rel_path=?, sort_key=?, size=?, mtime=?, "
+                    "content_hash='', phash_int=NULL WHERE id=?",
+                    (stored_new, common.natural_key(stored_new),
+                     st.st_size, st.st_mtime, row["id"]))
+                conn.commit()
+        finally:
+            conn.close()
+        print(f"  {rel_out}: wiederhergestellt"
+              + (f" (entfernt: {', '.join(_safe(c.name) for c in present)})"
+                 if present else ""))
+        done += 1
+
+    print("\n" + "-"*60)
+    if dry:
+        print(f"Trockenlauf: {done} Original(e) wuerden wiederhergestellt.")
+        print("-> Wirklich:  ./run.sh convert --restore-trash --apply")
+    else:
+        print(f"Fertig: {done} wiederhergestellt, {skipped} Fehler.")
+        print("Leere Ordner im Papierkorb koennen bleiben.")
+        print("Tipp: Merkliste ggf. leeren, damit erneut probiert wird:")
+        print("  ./run.sh convert --forget-nogain")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         prog="./run.sh convert",
@@ -706,9 +796,9 @@ nicht bestanden / konvertiert).
                     help="zeigt, welche Encoder dieses ffmpeg unterstuetzt")
     ap.add_argument("--crf", type=int, default=None,
                     help="Qualitaet; kleiner = besser/groesser. Defaults: "
-                         "hevc 21, av1 30, nvenc/vaapi/qsv 24 "
-                         "(Hardware-Encoder brauchen etwas mehr Bitrate "
-                         "fuer dieselbe Qualitaet)")
+                         "hevc 21, av1(CPU) 26, GPU-Encoder 24. "
+                         "Hardware-Encoder und AV1 brauchen bei gleicher "
+                         "Zahl mehr Bitrate-Reserve, daher niedrigere Werte.")
     ap.add_argument("--preset", default=None,
                     help="Encoder-Preset (hevc 'medium', av1 '6', "
                          "nvenc 'p5' (p1 schnell .. p7 klein))")
@@ -736,6 +826,12 @@ nicht bestanden / konvertiert).
     ap.add_argument("--no-fix-names", action="store_true",
                     help="kaputt kodierte Dateinamen NICHT mitreparieren "
                          "(Default: beim Konvertieren gleich korrigieren)")
+    ap.add_argument("--restore-trash", action="store_true",
+                    help="Originale aus dem Papierkorb wiederherstellen "
+                         "(Trockenlauf; mit --apply wirklich ausfuehren)")
+    ap.add_argument("--only", default=None,
+                    help="bei --restore-trash: nur Pfade, die diesen Text "
+                         "enthalten")
     ap.add_argument("--empty-trash", action="store_true",
                     help="Papierkorb endgueltig loeschen und beenden")
     args = ap.parse_args()
@@ -782,6 +878,11 @@ nicht bestanden / konvertiert).
 
     root = resolve_root(args.root)
     trash = root / TRASH_NAME
+
+    # --- Papierkorb wiederherstellen ---
+    if args.restore_trash:
+        cmd_restore_trash(root, trash, dry=not args.apply, only=args.only)
+        return
 
     # --- Papierkorb leeren ---
     if args.empty_trash:

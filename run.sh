@@ -279,7 +279,9 @@ Commands:
                       10-20x schneller)  --list-encoders zeigt Verfuegbares
                     --crf N  --preset X  --limit N (zum Antesten, bricht
                       auch die Pruef-Phase ab)
-                    --empty-trash  = Papierkorb endgueltig loeschen
+                    --empty-trash    = Papierkorb endgueltig loeschen
+                    --restore-trash  = Originale zurueckholen (Trockenlauf;
+                      mit --apply wirklich; --only TEXT filtert Pfade)
                     Wiederholbar: schon Konvertierte werden uebersprungen.
                       Videos die NICHT kleiner wurden, landen in einer
                       Merkliste und werden nicht neu encodet
