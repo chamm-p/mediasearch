@@ -47,6 +47,8 @@ R_UNREADABLE = "nicht lesbar"           # ffprobe/Decoder scheitert (flv, rm, ..
 R_ENCODE     = "encode fehlgeschlagen"  # ffmpeg-Fehler
 R_QS         = "QS nicht bestanden"     # Laenge/Audio/Aufloesung/groesser
 R_REPLACE    = "ersetzen fehlgeschlagen"
+R_LIMIT      = "nicht bearbeitet (--limit)"
+R_DRYRUN     = "wuerde konvertiert"
 
 
 class Report:
@@ -73,7 +75,7 @@ class Report:
         if self.path is None:
             return None
         order = [R_UNREADABLE, R_QS, R_ENCODE, R_REPLACE, R_ALREADY,
-                 R_TOO_SMALL, R_OK]
+                 R_TOO_SMALL, R_LIMIT, R_DRYRUN, R_OK]
         by: dict[str, list[tuple[str, str]]] = {}
         for reason, rel, detail in self.rows:
             by.setdefault(reason, []).append((rel, detail))
@@ -182,18 +184,73 @@ def decodes_ok(path: Path) -> bool:
 
 # ---------- Encoder ----------
 
-def build_encode_cmd(src: Path, dst: Path, codec: str, crf: int,
+# Encoder-Profile. Wichtig: Hardware-Encoder (NVENC/VAAPI/QSV) kennen
+# WEDER -crf NOCH die libx265-Presets - sie nutzen eigene Qualitaets-Flags
+# (-cq bzw. -qp/-global_quality) und eigene Preset-Namen (p1..p7). Deshalb
+# pro Encoder ein eigenes Profil statt einer gemeinsamen Codezeile.
+#   quality_flag: wie wird die Qualitaet gesetzt
+#   default_q   : sinnvoller Startwert (visuell verlustfrei)
+#   preset      : Default-Preset
+#   hw          : Hardware-Encoder? (nur Info fuer die Ausgabe)
+ENCODERS: dict[str, dict] = {
+    "hevc": {           # CPU, beste Kompression pro Bit, langsam
+        "vcodec": "libx265", "quality_flag": "-crf", "default_q": 21,
+        "preset": "medium", "hw": False,
+        "extra": ["-pix_fmt", "yuv420p", "-tag:v", "hvc1"],
+    },
+    "av1": {            # CPU, kleinste Dateien, sehr langsam
+        "vcodec": "libsvtav1", "quality_flag": "-crf", "default_q": 30,
+        "preset": "6", "hw": False,
+        "extra": ["-pix_fmt", "yuv420p10le", "-svtav1-params", "tune=0"],
+    },
+    "nvenc": {          # NVIDIA-GPU, 10-20x schneller als libx265
+        "vcodec": "hevc_nvenc", "quality_flag": "-cq", "default_q": 24,
+        "preset": "p5", "hw": True,
+        # -rc vbr + -cq = qualitaetsbasiert (wie CRF). p5 = guter
+        # Kompromiss, p7 = langsamer/kleiner. -tag:v hvc1 fuer Kompatibilitaet.
+        "extra": ["-rc", "vbr", "-b:v", "0", "-pix_fmt", "yuv420p",
+                  "-tag:v", "hvc1"],
+    },
+    "vaapi": {          # Intel/AMD-GPU unter Linux
+        "vcodec": "hevc_vaapi", "quality_flag": "-qp", "default_q": 24,
+        "preset": "", "hw": True,
+        "extra": ["-tag:v", "hvc1"],
+        "pre_input": ["-vaapi_device", "/dev/dri/renderD128"],
+        "filter": "format=nv12,hwupload",
+    },
+    "qsv": {            # Intel QuickSync
+        "vcodec": "hevc_qsv", "quality_flag": "-global_quality",
+        "default_q": 24, "preset": "medium", "hw": True,
+        "extra": ["-tag:v", "hvc1"],
+    },
+}
+
+
+def available_encoders() -> set[str]:
+    """Welche unserer Encoder kennt das installierte ffmpeg wirklich?"""
+    try:
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                           capture_output=True, text=True, timeout=30)
+        out = r.stdout or ""
+    except Exception:
+        return set()
+    return {name for name, prof in ENCODERS.items() if prof["vcodec"] in out}
+
+
+def build_encode_cmd(src: Path, dst: Path, codec: str, quality: int,
                      preset: str) -> list[str]:
     """ffmpeg-Kommando. -map 0 + -c:a copy: ALLE Streams und Audio
     unveraendert uebernehmen (kein Qualitaetsverlust beim Ton, schneller)."""
-    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
-           "-i", str(src), "-map", "0", "-map_metadata", "0"]
-    if codec == "av1":
-        cmd += ["-c:v", "libsvtav1", "-crf", str(crf), "-preset", preset,
-                "-pix_fmt", "yuv420p10le", "-svtav1-params", "tune=0"]
-    else:  # hevc
-        cmd += ["-c:v", "libx265", "-crf", str(crf), "-preset", preset,
-                "-pix_fmt", "yuv420p", "-tag:v", "hvc1"]
+    prof = ENCODERS[codec]
+    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error"]
+    cmd += prof.get("pre_input", [])
+    cmd += ["-i", str(src), "-map", "0", "-map_metadata", "0"]
+    if prof.get("filter"):
+        cmd += ["-vf", prof["filter"]]
+    cmd += ["-c:v", prof["vcodec"], prof["quality_flag"], str(quality)]
+    if preset:
+        cmd += ["-preset", preset]
+    cmd += prof.get("extra", [])
     # Audio/Untertitel unveraendert; Daten-Streams verwerfen (machen oft Aerger)
     cmd += ["-c:a", "copy", "-c:s", "copy", "-dn",
             "-movflags", "+faststart", str(dst)]
@@ -312,8 +369,20 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
     # dann Codec, dann Groesse.
     out: list[Path] = []
     n = len(found)
+    checked = 0
     for i, p in enumerate(found, 1):
+        # FRUEH-ABBRUCH: sobald das Limit erreicht ist, nicht weiter proben.
+        # Sonst wuerde '--limit 100' trotzdem ffprobe ueber ALLE (z.B. 5000)
+        # Dateien laufen lassen - bei grossen Sammlungen minutenlang umsonst.
+        if limit and len(out) >= limit:
+            for rest in found[i-1:]:
+                report.add(R_LIMIT, str(rest.relative_to(root)),
+                           "nicht geprueft (Limit erreicht)")
+            print(f"  Limit {limit} erreicht - restliche "
+                  f"{len(found) - (i-1)} Dateien nicht mehr geprueft.", flush=True)
+            break
         rel = str(p.relative_to(root))
+        checked = i
         if i % 200 == 0 or i == n:
             print(f"  ...geprueft {i}/{n}", flush=True)
         info = probe(p)
@@ -330,10 +399,6 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
                        f"{_mb(info['size'])}, {info['vcodec']}")
             continue
         out.append(p)
-    if limit:
-        for p in out[limit:]:
-            report.add("nicht bearbeitet (--limit)", str(p.relative_to(root)), "")
-        out = out[:limit]
     return out
 
 
@@ -357,6 +422,9 @@ Beispiele:
   ./run.sh convert --apply             konvertieren, Originale in den Papierkorb
   ./run.sh convert --apply --limit 5   erst 5 Videos probieren (empfohlen zum Start)
   ./run.sh convert --apply --delete    Originale sofort loeschen (kein Papierkorb)
+  ./run.sh convert --apply --codec nvenc --limit 100
+                                       NVIDIA-GPU, 10-20x schneller als hevc
+  ./run.sh convert --list-encoders     welche Encoder kann dieses ffmpeg?
   ./run.sh convert --apply --codec av1 AV1 statt H.265 (kleiner, aber viel langsamer)
   ./run.sh convert --empty-trash       Papierkorb endgueltig loeschen (Platz frei)
   ./run.sh convert --apply --reserve-gb 25
@@ -365,6 +433,9 @@ Beispiele:
 Platzmangel: faellt der freie Platz unter --reserve-gb, haelt der Lauf an.
 Dann Papierkorb pruefen, '--empty-trash', und den Lauf neu starten -
 bereits konvertierte Videos werden uebersprungen.
+
+Mit --limit N wird nach N Kandidaten abgebrochen - auch die Pruef-Phase
+stoppt dann (keine unnoetigen ffprobe-Laeufe ueber die restliche Sammlung).
 
 Protokoll: jeder Lauf schreibt convert-report-<zeit>.log mit allen Dateien
 nach Grund gruppiert (nicht lesbar / bereits effizient / zu klein / QS
@@ -377,14 +448,21 @@ nicht bestanden / konvertiert).
     ap.add_argument("--delete", action="store_true",
                     help="Original nach erfolgreicher QS SOFORT loeschen "
                          "(statt in den Papierkorb zu verschieben)")
-    ap.add_argument("--codec", choices=["hevc", "av1"], default="hevc",
-                    help="Video-Codec (default hevc = H.265: schneller, "
-                         "ueberall abspielbar; av1 = kleiner, viel langsamer)")
+    ap.add_argument("--codec", choices=sorted(ENCODERS.keys()), default="hevc",
+                    help="Encoder. hevc=libx265 (CPU, beste Kompression), "
+                         "av1=libsvtav1 (kleiner, sehr langsam), "
+                         "nvenc=NVIDIA-GPU (10-20x schneller), "
+                         "vaapi/qsv=Intel/AMD-GPU. default hevc")
+    ap.add_argument("--list-encoders", action="store_true",
+                    help="zeigt, welche Encoder dieses ffmpeg unterstuetzt")
     ap.add_argument("--crf", type=int, default=None,
-                    help="Qualitaet (hevc default 21, av1 default 30); "
-                         "kleiner = besser/groesser")
+                    help="Qualitaet; kleiner = besser/groesser. Defaults: "
+                         "hevc 21, av1 30, nvenc/vaapi/qsv 24 "
+                         "(Hardware-Encoder brauchen etwas mehr Bitrate "
+                         "fuer dieselbe Qualitaet)")
     ap.add_argument("--preset", default=None,
-                    help="ffmpeg-Preset (hevc default 'medium', av1 '6')")
+                    help="Encoder-Preset (hevc 'medium', av1 '6', "
+                         "nvenc 'p5' (p1 schnell .. p7 klein))")
     ap.add_argument("--reserve-gb", type=float, default=10.0,
                     help="Pause, wenn weniger als N GB frei sind (default 10)")
     ap.add_argument("--min-mb", type=float, default=5.0,
@@ -405,10 +483,36 @@ nicht bestanden / konvertiert).
                     help="Papierkorb endgueltig loeschen und beenden")
     args = ap.parse_args()
 
+    # --- Encoder-Uebersicht ---
+    if args.list_encoders:
+        have = available_encoders()
+        print("Encoder dieses ffmpeg-Builds:\n")
+        for name in sorted(ENCODERS):
+            prof = ENCODERS[name]
+            mark = "vorhanden" if name in have else "NICHT vorhanden"
+            kind = "GPU/Hardware" if prof["hw"] else "CPU"
+            print(f"  --codec {name:<6} {prof['vcodec']:<14} {kind:<12} "
+                  f"{mark}")
+        if "nvenc" in have:
+            print("\nTipp: nvenc ist verfuegbar - deutlich schneller als hevc.")
+            print("  ./run.sh convert --apply --codec nvenc --limit 100")
+        return
+
+    # Encoder-Pruefung VOR der Root-Auflösung: haengt nicht vom Verzeichnis ab,
+    # und ein fehlender Encoder wuerde sonst bei jedem einzelnen Video scheitern.
+    prof = ENCODERS[args.codec]
+    have = available_encoders()
+    if args.codec not in have:
+        print(f"FEHLER: Encoder '{prof['vcodec']}' ist in diesem ffmpeg nicht "
+              f"vorhanden.")
+        print(f"Verfuegbar: {', '.join(sorted(have)) or '(keiner gefunden)'}")
+        print("Uebersicht:  ./run.sh convert --list-encoders")
+        sys.exit(1)
+    crf = args.crf if args.crf is not None else prof["default_q"]
+    preset = args.preset if args.preset is not None else prof["preset"]
+
     root = resolve_root(args.root)
     trash = root / TRASH_NAME
-    crf = args.crf if args.crf is not None else (30 if args.codec == "av1" else 21)
-    preset = args.preset or ("6" if args.codec == "av1" else "medium")
 
     # --- Papierkorb leeren ---
     if args.empty_trash:
@@ -434,7 +538,10 @@ nicht bestanden / konvertiert).
     report = Report(log_path)
 
     print(f"Wurzelverzeichnis: {root}")
-    print(f"Codec: {args.codec} (crf={crf}, preset={preset})")
+    print(f"Codec: {args.codec} / {prof['vcodec']}"
+          f"{' (GPU)' if prof['hw'] else ' (CPU)'}"
+          f"  {prof['quality_flag']}={crf}"
+          f"{' preset=' + preset if preset else ''}")
     print(f"Modus: {'APPLY' if args.apply else 'Trockenlauf (keine Aenderung)'}"
           f"{'  + Originale SOFORT loeschen' if args.apply and args.delete else ''}")
     if not args.delete:
@@ -457,7 +564,8 @@ nicht bestanden / konvertiert).
         print("Nichts zu konvertieren.")
         # Log trotzdem schreiben - genau hier will man die Gruende sehen.
         written = report.write(root, {
-            "Codec": f"{args.codec} crf={crf} preset={preset}",
+            "Codec": f"{args.codec} ({prof['vcodec']}) "
+                     f"{prof['quality_flag']}={crf}",
             "Modus": "apply" if args.apply else "Trockenlauf",
             "min-mb": args.min_mb,
             "skip": ", ".join(sorted(skip_codecs)) if skip_codecs else "-",
@@ -504,7 +612,7 @@ nicht bestanden / konvertiert).
                       f"{info['width']}x{info['height']}, {info['duration']:.1f}s"
                       f"{'' if info['n_audio'] else ', OHNE Audio'}")
             print(f"{label}: {detail}")
-            report.add("wuerde konvertiert", rel, detail)
+            report.add(R_DRYRUN, rel, detail)
             done += 1
             continue
 
@@ -601,7 +709,8 @@ nicht bestanden / konvertiert).
     problems = sum(n for r, n in counts.items()
                    if r in (R_UNREADABLE, R_ENCODE, R_QS, R_REPLACE))
     written = report.write(root, {
-        "Codec": f"{args.codec} crf={crf} preset={preset}",
+        "Codec": f"{args.codec} ({prof['vcodec']}) "
+                 f"{prof['quality_flag']}={crf} preset={preset or '-'}",
         "Modus": ("apply" + (" --delete" if args.delete else "")
                   if args.apply else "Trockenlauf"),
         "min-mb": args.min_mb,

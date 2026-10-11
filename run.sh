@@ -275,7 +275,10 @@ Commands:
                     gleich, kleiner als vorher. Original -> Papierkorb im
                     Medien-Root; --delete loescht sofort. Pausiert, wenn der
                     freie Platz unter --reserve-gb faellt (default 10).
-                    --codec hevc|av1  --crf N  --preset X  --limit N
+                    --codec hevc|av1|nvenc|vaapi|qsv (nvenc = NVIDIA-GPU,
+                      10-20x schneller)  --list-encoders zeigt Verfuegbares
+                    --crf N  --preset X  --limit N (zum Antesten, bricht
+                      auch die Pruef-Phase ab)
                     --empty-trash  = Papierkorb endgueltig loeschen
                     Schreibt ein Lauf-Protokoll (convert-report-<zeit>.log)
                     mit allen Dateien nach Grund gruppiert: nicht lesbar

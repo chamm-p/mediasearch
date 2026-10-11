@@ -114,6 +114,9 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 ./run.sh setup-browser         # portablen Browser laden
 ./run.sh convert               # Videos komprimieren (Trockenlauf)
 ./run.sh convert --apply       # wirklich konvertieren (QS, dann Papierkorb)
+./run.sh convert --list-encoders        # welche Encoder kann dieses ffmpeg?
+./run.sh convert --apply --limit 100    # erst 100 Videos (zum Antesten)
+./run.sh convert --apply --codec nvenc  # NVIDIA-GPU: 10-20x schneller
 ./run.sh convert --empty-trash # Papierkorb endgueltig loeschen
 # convert schreibt ein Protokoll: convert-report-<zeit>.log
 #   -> welche Dateien nicht lesbar waren (alte flv/rm, defekt),
