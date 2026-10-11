@@ -279,6 +279,9 @@ Commands:
                       10-20x schneller)  --list-encoders zeigt Verfuegbares
                     --crf N  --preset X  --limit N (zum Antesten, bricht
                       auch die Pruef-Phase ab)
+                    --min-bpp 0.12 = nur Videos mit Bitrate-Reserve
+                      (verrauschte/grobpixelige sind schon sparsam kodiert,
+                       dort wird das Ergebnis eher groesser)
                     --empty-trash    = Papierkorb endgueltig loeschen
                     --restore-trash  = Originale zurueckholen (Trockenlauf;
                       mit --apply wirklich; --only TEXT filtert Pfade)

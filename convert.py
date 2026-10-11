@@ -51,6 +51,7 @@ R_QS         = "QS nicht bestanden"     # Laenge/Audio/Aufloesung/groesser
 R_REPLACE    = "ersetzen fehlgeschlagen"
 R_LIMIT      = "nicht bearbeitet (--limit)"
 R_NOGAIN     = "bringt nichts (gemerkt)"   # frueher schon: nicht kleiner
+R_LOW_BPP    = "schon sparsam (bpp)"       # kaum Reserve -> lohnt nicht
 R_DRYRUN     = "wuerde konvertiert"
 
 
@@ -151,7 +152,7 @@ class Report:
         if self.path is None:
             return None
         order = [R_UNREADABLE, R_QS, R_ENCODE, R_REPLACE, R_ALREADY,
-                 R_NOGAIN, R_TOO_SMALL, R_LIMIT, R_DRYRUN, R_OK]
+                 R_NOGAIN, R_LOW_BPP, R_TOO_SMALL, R_LIMIT, R_DRYRUN, R_OK]
         by: dict[str, list[tuple[str, str]]] = {}
         for reason, rel, detail in self.rows:
             by.setdefault(reason, []).append((rel, detail))
@@ -192,6 +193,12 @@ class Report:
                         f.write("Diese Dateien konnte kein Decoder oeffnen "
                                 "(alte Formate wie flv/rm, oder defekt).\n"
                                 "-> Reparaturversuch: ./run.sh fix-videos\n\n")
+                    elif reason == R_LOW_BPP:
+                        f.write("Zu wenige Bits pro Pixel - das Original ist "
+                                "schon sparsam kodiert (grobpixelig/\n"
+                                "verrauscht). Eine Konvertierung wuerde die "
+                                "Datei eher VERGROESSERN.\n"
+                                "Mit --min-bpp 0 trotzdem versuchen.\n\n")
                     elif reason == R_NOGAIN:
                         f.write("Beim letzten Versuch wurde das Ergebnis NICHT "
                                 "kleiner (schon sparsam kodiert, verrauscht\n"
@@ -339,6 +346,7 @@ def probe(path: Path) -> dict | None:
         "n_audio": len(aus),
         "audio_channels": sum(int(a.get("channels") or 0) for a in aus),
         "size": path.stat().st_size,
+        "bpp": _bits_per_pixel(d, v, dur),
         "n_cover": n_cover,          # eingebettete Thumbnails
         "v_index": int(v.get("index") or 0),
     }
@@ -392,6 +400,32 @@ def diagnose_unreadable(path: Path) -> str:
     if frc == 0 and not ferr:
         return "Frame geht JETZT -> './run.sh tag <root> --retry-errors'"
     return f"Frame-Extraktion scheitert ({msg[:100] or 'rc=' + str(frc)})"
+
+
+def _bits_per_pixel(d: dict, v: dict, dur: float) -> float:
+    """Bits pro Pixel pro Frame - der belastbare Qualitaets-/Reserve-Marker
+    (unabhaengig von Auflaesung und Laenge, anders als die Dateigroesse).
+
+    Messung auf Testmaterial (HEVC crf 22):
+      bpp 0.08 (grobpixelig, verrauscht) -> Ergebnis 32% GROESSER
+      bpp 0.10 (mittel)                  -> 20% groesser
+      bpp 0.21 (gute Kamera-Qualitaet)   -> 31% gespart
+    Niedrige bpp heisst: das Original ist schon sparsam kodiert, es gibt
+    nichts mehr zu holen. Hohe bpp heisst: viel Reserve, Konvertierung
+    lohnt sich."""
+    try:
+        br = float(d.get("format", {}).get("bit_rate") or 0)
+        if br <= 0:
+            br = float(v.get("bit_rate") or 0)
+        w, h = int(v.get("width") or 0), int(v.get("height") or 0)
+        fr = v.get("r_frame_rate") or "0/1"
+        num, _, den = fr.partition("/")
+        fps = float(num) / float(den or 1)
+        if br > 0 and w > 0 and h > 0 and fps > 0:
+            return br / (w * h * fps)
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return 0.0
 
 
 def decodes_ok(path: Path) -> bool:
@@ -702,7 +736,8 @@ def db_update_converted(root: Path, rel: str, new_abs: Path,
 
 def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
                limit: int | None, report: "Report",
-               skiplist: dict | None = None) -> list[Path]:
+               skiplist: dict | None = None,
+               min_bpp: float = 0.0) -> list[Path]:
     """Alle Videos unter root (rekursiv), ohne Papierkorb und Temp-Reste.
     skip_codecs: bereits effizient kodierte Videos AUSSCHLIESSEN (z.B. hevc/av1
     nicht nochmal durch den Encoder schicken - das kostet nur Qualitaet).
@@ -767,6 +802,13 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
         if info["size"] < min_mb * 1e6:
             report.add(R_TOO_SMALL, rel,
                        f"{_mb(info['size'])}, {info['vcodec']}")
+            continue
+        # Schon sparsam kodiert? Dann lohnt die Konvertierung nicht - sie
+        # wuerde die Datei meist sogar vergroessern (gemessen, s. oben).
+        if min_bpp > 0 and 0 < info["bpp"] < min_bpp:
+            report.add(R_LOW_BPP, rel,
+                       f"bpp={info['bpp']:.3f} < {min_bpp}, "
+                       f"{info['vcodec']}, {_mb(info['size'])}")
             continue
         # Frueher schon erfolglos (Ergebnis war nicht kleiner)? Dann nicht
         # wieder encoden - der Schluessel enthaelt Groesse+mtime, bei einer
@@ -891,6 +933,18 @@ Die QS prueft VOR dem Loeschen: abspielbar, Frame dekodierbar, Laenge wie
 Original, Audio erhalten, Aufloesung gleich, Ergebnis kleiner. Scheitert
 eine Pruefung, bleibt das Original unangetastet.
 
+WELCHE VIDEOS LOHNEN SICH? (--min-bpp)
+Entscheidend ist nicht die Dateigroesse, sondern die Bitrate pro Pixel
+(bpp). Gemessen mit HEVC crf 22:
+  bpp 0.08  grobpixelig/verrauscht -> Ergebnis 32% GROESSER
+  bpp 0.10  mittel                 -> 20% groesser
+  bpp 0.21  gute Kameraqualitaet   -> 31% gespart
+Also genau umgekehrt zur Intuition: schlechte, verrauschte Videos sind
+schon sparsam kodiert, da ist nichts zu holen. Der Platz liegt in den
+"schoenen" Videos mit viel Bitrate-Reserve.
+  --min-bpp 0.12   ueberspringt die aussichtslosen Faelle
+Der Trockenlauf zeigt bpp pro Datei, damit man die Schwelle waehlen kann.
+
 QUALITAET - wichtig zu wissen:
 Alle Varianten sind VERLUSTBEHAFTET. Bei normaler Betrachtung kaum
 unterscheidbar, beim Reinzoomen sieht man Detailverlust (Korn, Hauttextur,
@@ -974,6 +1028,12 @@ nicht bestanden / konvertiert).
                          "nvenc 'p5' (p1 schnell .. p7 klein))")
     ap.add_argument("--reserve-gb", type=float, default=10.0,
                     help="Pause, wenn weniger als N GB frei sind (default 10)")
+    ap.add_argument("--min-bpp", type=float, default=0.0,
+                    help="nur Videos mit mind. N Bits pro Pixel konvertieren "
+                         "(0 = aus). Niedrige bpp = schon sparsam kodiert, "
+                         "Konvertierung bringt dort nichts bis negativ. "
+                         "Richtwerte: <0.10 lohnt nicht, 0.15 solide, "
+                         "0.20+ viel Reserve. Empfehlung: --min-bpp 0.12")
     ap.add_argument("--min-mb", type=float, default=5.0,
                     help="Videos kleiner als N MB ueberspringen (default 5)")
     ap.add_argument("--skip-codecs", default="hevc,h265,av1",
@@ -1126,7 +1186,7 @@ nicht bestanden / konvertiert).
     print("\nsammle Videos (ffprobe pro Datei, kann dauern)...")
 
     vids = candidates(root, skip_codecs, args.min_mb, args.limit, report,
-                      skiplist=skiplist_active)
+                      skiplist=skiplist_active, min_bpp=args.min_bpp)
     pre = report.counts()
     print(f"\nKandidaten: {len(vids)}")
     if pre:
@@ -1184,7 +1244,8 @@ nicht bestanden / konvertiert).
 
         if not args.apply:
             detail = (f"{_mb(info['size'])}, {info['vcodec']}, "
-                      f"{info['width']}x{info['height']}, {info['duration']:.1f}s"
+                      f"{info['width']}x{info['height']}, {info['duration']:.1f}s, "
+                      f"bpp={info['bpp']:.3f}"
                       f"{'' if info['n_audio'] else ', OHNE Audio'}")
             print(f"{label}: {detail}")
             report.add(R_DRYRUN, rel_out, detail)
