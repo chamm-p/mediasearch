@@ -268,6 +268,16 @@ Commands:
                   Ohne Argument: Root aus settings.json.
 
   backup     [root]          DB jetzt sichern (= db-backup)
+  convert [root]             Videos verlustarm komprimieren (H.265/AV1)
+                    Trockenlauf; --apply konvertiert wirklich.
+                    QS vor dem Loeschen: abspielbar, Frame dekodierbar,
+                    Laenge == Original, Audio/Kanaele erhalten, Aufloesung
+                    gleich, kleiner als vorher. Original -> Papierkorb im
+                    Medien-Root; --delete loescht sofort. Pausiert, wenn der
+                    freie Platz unter --reserve-gb faellt (default 10).
+                    --codec hevc|av1  --crf N  --preset X  --limit N
+                    --empty-trash  = Papierkorb endgueltig loeschen
+
   fix-videos [root]          Videos mit Tagging-Fehler per ffmpeg reparieren
                     (Trockenlauf; --apply ersetzt Originale mit Backup,
                      --no-reencode nur Remux, --all alle Videos, --limit N)
@@ -336,6 +346,7 @@ case "${1:-ui}" in
     dedupe)         shift; exec "$PY" dedupe.py "$@" ;;
     diag)           shift; exec "$PY" diag_scan.py "$@" ;;
     fix-videos)     shift; exec "$PY" fixvideos.py "$@" ;;
+    convert)        shift; exec "$PY" convert.py   "$@" ;;
     db-check)       shift; exec "$PY" dbtools.py check   "$@" ;;
     backup)         shift; exec "$PY" dbtools.py backup  "$@" ;;
     db-backup)      shift; exec "$PY" dbtools.py backup  "$@" ;;

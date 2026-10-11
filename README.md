@@ -18,6 +18,9 @@ Vision-Endpoint deiner Wahl (vLLM, LM Studio, Ollama, etc.).
 - **Nutzungsdauer-Ranking** - bei Videos wird die Abspielzeit
   (mpv-Start bis Esc) aufsummiert; Sortierung "Nutzungsdauer (laengste
   zuerst)" zeigt die meistgesehenen Videos zuoberst
+- **Video-Komprimierung** (`convert`) - H.265/AV1 mit technischer QS
+  (Laenge/Audio/Aufloesung/Abspielbarkeit) vor dem Loeschen des Originals,
+  Papierkorb + Platz-Ueberwachung mit Pause
 - **LoRA-Export** ausgewaehlter Bilder mit Tag-Sidecars
 - **Inkrementell** - Re-Scan erkennt neue / verschobene / geloeschte Files,
   Tags ueberleben Renames
@@ -109,6 +112,12 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 ./run.sh tag <root> --limit N  # CLI-Tagging
 ./run.sh thumbs <root>         # Thumbnails neu erzeugen
 ./run.sh setup-browser         # portablen Browser laden
+./run.sh convert               # Videos komprimieren (Trockenlauf)
+./run.sh convert --apply       # wirklich konvertieren (QS, dann Papierkorb)
+./run.sh convert --empty-trash # Papierkorb endgueltig loeschen
+./run.sh fix-videos            # kaputte Videos per ffmpeg reparieren
+./run.sh diag                  # Scan-/DB-Diagnose
+./run.sh db-check              # DB-Integritaet + Backups
 ```
 
 ## Konfiguration

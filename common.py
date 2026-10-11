@@ -624,9 +624,21 @@ def _init_db_locked(root: Path, force: bool = False) -> None:
     _INIT_DONE.add(key)
 
 
+# Interne Ordner, die IM Medien-Root liegen koennen, aber keine Bibliothek
+# sind - vom Scan ausnehmen, sonst landen z.B. die vom Konverter
+# weggeraeumten Originale als Duplikate in der DB.
+EXCLUDE_DIRS = {
+    ".mediasearch-converted-originals",   # convert.py: Originale nach Konvertierung
+    ".mediasearch-trash",
+}
+
+
 def iter_media(root: Path) -> Iterable[Path]:
-    """Walk root, yield media files. (DB liegt nicht mehr im Root.)"""
+    """Walk root, yield media files. (DB liegt nicht mehr im Root.)
+    Interne Ordner (EXCLUDE_DIRS) werden ausgelassen."""
     for dirpath, dirnames, filenames in os.walk(root):
+        # in-place filtern -> os.walk steigt in diese Ordner nicht ab
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         for name in filenames:
             p = Path(dirpath) / name
             if media_type(p) is not None:
