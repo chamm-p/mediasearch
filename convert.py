@@ -265,6 +265,31 @@ def decodes_ok(path: Path) -> bool:
     return common.extract_video_frame(path, 0.0) is not None
 
 
+# Container, die HEVC/AV1 korrekt speichern koennen. Alte Container (avi,
+# wmv, flv, mpg...) kennen keine passenden Codec-Tags: ffmpeg schreibt dann
+# entweder gar nicht (-> "Error opening output files: Invalid argument") oder
+# eine Datei, die als 'rawvideo' gelesen wird und praktisch unbrauchbar ist.
+# Deshalb landet das Ergebnis bei solchen Quellen in einem .mp4 (bzw. .mkv,
+# wenn mehrere Tonspuren/Untertitel dabei sind, die mp4 nicht mag).
+MODERN_CONTAINERS = {".mp4", ".mkv", ".mov", ".m4v", ".webm"}
+
+
+def target_suffix(src: Path, codec: str, info: dict) -> str:
+    """Welche Endung soll das Ergebnis haben?
+
+    Behaelt die Original-Endung, wenn der Container HEVC/AV1 kann.
+    Sonst .mkv (vielseitigster Container) bzw. .mp4 fuer den Normalfall."""
+    suf = src.suffix.lower()
+    if suf in MODERN_CONTAINERS:
+        if suf == ".webm" and codec.startswith("hevc") or \
+           suf == ".webm" and codec in ("hevc", "nvenc", "qsv", "vaapi"):
+            return ".mkv"          # webm darf kein HEVC enthalten
+        return src.suffix
+    # Alter Container -> umpacken. mkv schluckt alles (auch mehrere
+    # Tonspuren, Untertitel, ungewoehnliche Audio-Codecs wie wmav2).
+    return ".mkv"
+
+
 # ---------- Encoder ----------
 
 # Encoder-Profile. Wichtig: Hardware-Encoder (NVENC/VAAPI/QSV) kennen
@@ -359,14 +384,19 @@ def build_encode_cmd(src: Path, dst: Path, codec: str, quality: int,
         cmd += ["-preset", preset]
     cmd += prof.get("extra", [])
     # Audio/Untertitel unveraendert; Daten-Streams verwerfen (machen oft Aerger)
-    cmd += ["-c:a", "copy", "-c:s", "copy", "-dn",
-            "-movflags", "+faststart", str(dst)]
+    cmd += ["-c:a", "copy", "-c:s", "copy", "-dn"]
+    # +faststart ist eine MP4/MOV-Eigenschaft (moov nach vorn) - bei anderen
+    # Containern sinnlos.
+    if dst.suffix.lower() in (".mp4", ".mov", ".m4v"):
+        cmd += ["-movflags", "+faststart"]
+    cmd += [str(dst)]
     return cmd
 
 
 # ---------- QS ----------
 
-def qs_check(orig: dict, new_path: Path, tol_sec: float) -> tuple[bool, str]:
+def qs_check(orig: dict, new_path: Path, tol_sec: float,
+             want_codec: str | None = None) -> tuple[bool, str]:
     """Technische Qualitaetssicherung VOR dem Loeschen des Originals.
     Jede Pruefung ist ein Abbruchkriterium."""
     new = probe(new_path)
@@ -374,6 +404,11 @@ def qs_check(orig: dict, new_path: Path, tol_sec: float) -> tuple[bool, str]:
         return False, "nicht lesbar / kein Video-Stream"
     if not decodes_ok(new_path):
         return False, "kein Frame dekodierbar"
+    # Container-Falle: z.B. HEVC in .avi erzeugt eine Datei, die als
+    # 'rawvideo' gelesen wird - technisch da, praktisch unbrauchbar.
+    if want_codec and new["vcodec"].lower() not in (want_codec, "hevc", "av1"):
+        return False, (f"falscher Codec im Ergebnis: {new['vcodec']} "
+                       f"statt {want_codec} (Container passt nicht)")
     if orig["duration"] > 0:
         diff = abs(new["duration"] - orig["duration"])
         if diff > tol_sec:
@@ -629,6 +664,12 @@ Platzmangel: faellt der freie Platz unter --reserve-gb, haelt der Lauf an.
 Dann Papierkorb pruefen, '--empty-trash', und den Lauf neu starten -
 bereits konvertierte Videos werden uebersprungen.
 
+Container: alte Container (avi/divx, wmv, flv, mpg) koennen HEVC/AV1 nicht
+korrekt speichern - ffmpeg bricht dann ab ("Error opening output files:
+Invalid argument") oder schreibt eine praktisch unbrauchbare Datei. Solche
+Videos werden daher nach .mkv umgepackt (Audio/Untertitel unveraendert),
+der DB-Pfad wandert mit. .mp4/.mkv/.mov behalten ihre Endung.
+
 Wiederholte Laeufe: bereits konvertierte Videos sind danach HEVC/AV1 und
 werden per --skip-codecs uebersprungen - du kannst also jederzeit abbrechen
 und denselben Befehl neu starten. Videos, bei denen das Ergebnis NICHT
@@ -862,7 +903,10 @@ nicht bestanden / konvertiert).
             done += 1
             continue
 
-        tmp = src.with_name(src.stem + TMP_MARK + src.suffix)
+        # Zielcontainer: alte Container (avi/wmv/flv...) koennen HEVC/AV1
+        # nicht korrekt kennzeichnen -> Ergebnis als .mkv ablegen.
+        new_suffix = target_suffix(src, args.codec, info)
+        tmp = src.with_name(src.stem + TMP_MARK + new_suffix)
         if tmp.exists():
             try: tmp.unlink()
             except OSError: pass
@@ -890,7 +934,8 @@ nicht bestanden / konvertiert).
                 except OSError: pass
             continue
 
-        ok, why = qs_check(info, tmp, args.tol_sec)
+        want = "av1" if "av1" in ENCODERS[args.codec]["vcodec"] else "hevc"
+        ok, why = qs_check(info, tmp, args.tol_sec, want_codec=want)
         if not ok:
             print(f"{label}: QS NICHT bestanden ({why}) - Original bleibt")
             report.add(R_QS, rel_out, why)
@@ -926,6 +971,15 @@ nicht bestanden / konvertiert).
                 renamed = f" [Name repariert: {_safe(cand_rel)}]"
             elif cand_abs.exists():
                 renamed = " [Name-Fix uebersprungen: Ziel existiert]"
+        # Container gewechselt? Dann muss die Endung mitwandern.
+        if new_suffix.lower() != src.suffix.lower():
+            cand_abs = (root / final_rel).with_suffix(new_suffix)
+            if cand_abs.exists() and cand_abs != src:
+                renamed += " [Container-Wechsel uebersprungen: Ziel existiert]"
+            else:
+                final_rel = str(Path(final_rel).with_suffix(new_suffix))
+                final_abs = root / final_rel
+                renamed += f" [{src.suffix} -> {new_suffix}]"
 
         # --- Original wegraeumen, dann konvertierte an den Zielpfad ---
         try:
