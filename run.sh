@@ -288,10 +288,12 @@ Commands:
                       (--retry-nogain / --forget-nogain)
                     Kaputt kodierte Dateinamen werden mitrepariert
                       (DB-Pfad wandert mit) - abschaltbar via --no-fix-names
-                    Schreibt ein Lauf-Protokoll (convert-report-<zeit>.log)
-                    mit allen Dateien nach Grund gruppiert: nicht lesbar
-                    (alte flv/rm etc.), bereits effizient, zu klein, QS
-                    nicht bestanden, konvertiert. --log PFAD / --log '' 
+                    Schreibt EIN Protokoll (convert.log im Tool-Ordner),
+                      jeder Lauf haengt einen Abschnitt an; Logrotate ab
+                      --log-max-mb (default 5 MB, 3 Archive).
+                      Gruppiert nach Grund: nicht lesbar (mit konkreter
+                      Ursache), bereits effizient, zu klein, QS nicht
+                      bestanden, konvertiert. --log PFAD / --log '' 
 
   fix-videos [root]          Videos mit Tagging-Fehler per ffmpeg reparieren
                     --why zeigt pro Problem-Video die ECHTE ffmpeg-Meldung

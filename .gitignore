@@ -29,4 +29,5 @@ Thumbs.db
 *~
 vendor/
 mpv.log
-convert-report-*.log
+convert.log
+convert.log.*

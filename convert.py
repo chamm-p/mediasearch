@@ -75,6 +75,25 @@ class Report:
             out[reason] = out.get(reason, 0) + 1
         return out
 
+    @staticmethod
+    def rotate(path: Path, max_mb: float, keep: int = 3) -> None:
+        """Logrotate: ist das Log groesser als max_mb, wird es zu .1
+        weggedreht (.1 -> .2 usw.), aelteste fallen raus. So bleibt EIN
+        aktuelles Log, ohne unbegrenzt zu wachsen."""
+        try:
+            if not path.is_file() or path.stat().st_size < max_mb * 1e6:
+                return
+            for i in range(keep, 0, -1):
+                older = path.with_suffix(path.suffix + f".{i}")
+                newer = (path if i == 1
+                         else path.with_suffix(path.suffix + f".{i-1}"))
+                if newer.exists():
+                    if i == keep and older.exists():
+                        older.unlink()
+                    newer.replace(older)
+        except OSError as e:
+            print(f"WARNUNG: Logrotate fehlgeschlagen: {e}")
+
     def write(self, root: Path, header: dict) -> Path | None:
         """Schreibt das Log. Konvertierte kommen mit rein (Nachvollzieh-
         barkeit), die Problemfaelle stehen aber zuerst."""
@@ -87,8 +106,12 @@ class Report:
             by.setdefault(reason, []).append((rel, detail))
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path, "w", encoding="utf-8", errors="replace") as f:
-                f.write("mediasearch convert - Lauf-Protokoll\n")
+            # ANHAENGEN: ein einziges Log ueber alle Laeufe, mit klarer
+            # Trennung je Lauf. Rotation haelt die Datei in Groesse.
+            with open(self.path, "a", encoding="utf-8", errors="replace") as f:
+                f.write("\n\n" + "#" * 70 + "\n")
+                f.write(f"# LAUF {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("#" * 70 + "\n")
                 f.write(f"Zeitpunkt : {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"Root      : {root}\n")
                 for k, v in header.items():
@@ -826,7 +849,9 @@ reparierte Name schon, bleibt der alte (kein Ueberschreiben).
 Mit --limit N wird nach N Kandidaten abgebrochen - auch die Pruef-Phase
 stoppt dann (keine unnoetigen ffprobe-Laeufe ueber die restliche Sammlung).
 
-Protokoll: jeder Lauf schreibt convert-report-<zeit>.log mit allen Dateien
+Protokoll: EIN Log (convert.log im Tool-Ordner), jeder Lauf haengt einen
+Abschnitt an. Ab --log-max-mb (default 5 MB) wird zu convert.log.1 rotiert
+(3 Archive). Enthaelt alle Dateien
 nach Grund gruppiert (nicht lesbar / bereits effizient / zu klein / QS
 nicht bestanden / konvertiert).
 """)
@@ -866,7 +891,7 @@ nicht bestanden / konvertiert).
                     help="erlaubte Laengen-Abweichung in s (default 0.5)")
     ap.add_argument("--log", default=None,
                     help="Pfad fuer das Lauf-Protokoll "
-                         "(default: convert-report-<zeit>.log im Tool-Ordner; "
+                         "(default: convert.log im Tool-Ordner; "
                          "'' = kein Log)")
     ap.add_argument("--retry-nogain", action="store_true",
                     help="Videos erneut probieren, die laut Merkliste nichts "
@@ -876,6 +901,9 @@ nicht bestanden / konvertiert).
     ap.add_argument("--no-fix-names", action="store_true",
                     help="kaputt kodierte Dateinamen NICHT mitreparieren "
                          "(Default: beim Konvertieren gleich korrigieren)")
+    ap.add_argument("--log-max-mb", type=float, default=5.0,
+                    help="Logrotate: ab dieser Groesse wird convert.log zu "
+                         "convert.log.1 weggedreht (default 5 MB, 3 Archive)")
     ap.add_argument("--restore-trash", action="store_true",
                     help="Originale aus dem Papierkorb wiederherstellen "
                          "(Trockenlauf; mit --apply wirklich ausfuehren)")
@@ -966,12 +994,15 @@ nicht bestanden / konvertiert).
 
     # Lauf-Protokoll: Default in den Tool-Ordner (nicht in die Mediathek).
     if args.log is None:
-        log_path = HERE / f"convert-report-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        log_path = HERE / "convert.log"
     elif args.log == "":
         log_path = None
     else:
         log_path = Path(args.log).expanduser()
     report = Report(log_path)
+    if log_path is not None:
+        # vor dem Lauf rotieren, damit das Log nicht unbegrenzt waechst
+        Report.rotate(log_path, args.log_max_mb)
 
     print(f"Wurzelverzeichnis: {root}")
     print(f"Codec: {args.codec} / {prof['vcodec']}"
