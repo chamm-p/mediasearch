@@ -446,17 +446,32 @@ ENCODERS: dict[str, dict] = {
         "extra": ["-pix_fmt", "yuv420p10le", "-svtav1-params", "tune=0"],
     },
     "nvenc": {          # NVIDIA-GPU, 10-20x schneller als libx265
-        "vcodec": "hevc_nvenc", "quality_flag": "-cq", "default_q": 24,
-        "preset": "p5", "hw": True,
+        "vcodec": "hevc_nvenc", "quality_flag": "-cq", "default_q": 22,
+        "preset": "p7", "hw": True,
         # -rc vbr + -cq = qualitaetsbasiert (wie CRF). p5 = guter
         # Kompromiss, p7 = langsamer/kleiner. -tag:v hvc1 fuer Kompatibilitaet.
         "extra": ["-rc", "vbr", "-b:v", "0", "-pix_fmt", "yuv420p",
-                  "-tag:v", "hvc1"],
+                  "-tag:v", "hvc1",
+                  "-tune", "hq", "-spatial-aq", "1", "-temporal-aq", "1",
+                  "-aq-strength", "8", "-multipass", "fullres",
+                  "-rc-lookahead", "32"],
     },
     "av1nvenc": {       # NVIDIA AV1 - nur RTX 40xx/Ada und neuer!
-        "vcodec": "av1_nvenc", "quality_flag": "-cq", "default_q": 24,
-        "preset": "p5", "hw": True,
-        "extra": ["-rc", "vbr", "-b:v", "0", "-pix_fmt", "yuv420p"],
+        "vcodec": "av1_nvenc", "quality_flag": "-cq", "default_q": 22,
+        "preset": "p7", "hw": True,
+        # Hardware-Encoder komprimieren pro Bit schlechter als Software und
+        # glaetten feine Details (Korn, Hauttextur) - beim Reinzoomen sichtbar.
+        # Diese Optionen holen das Meiste davon zurueck und kosten kaum Zeit:
+        #   p7          bestes Qualitaets-Preset (statt p5)
+        #   tune hq     auf Qualitaet statt Latenz optimiert
+        #   spatial-aq  verteilt Bits in detailreiche Bildbereiche
+        #   temporal-aq dto. ueber die Zeit
+        #   multipass   Zwei-Pass-Analyse fuer bessere Bitverteilung
+        #   lookahead   Vorausschau fuer Bitplanung
+        "extra": ["-rc", "vbr", "-b:v", "0", "-pix_fmt", "yuv420p",
+                  "-tune", "hq", "-spatial-aq", "1", "-temporal-aq", "1",
+                  "-aq-strength", "8", "-multipass", "fullres",
+                  "-rc-lookahead", "32"],
     },
     "av1qsv": {         # Intel Arc / ab Alder Lake mit Arc-GPU
         "vcodec": "av1_qsv", "quality_flag": "-global_quality",
@@ -875,6 +890,18 @@ Ablauf je Video: encode -> QS -> Original wegraeumen -> DB aktualisieren.
 Die QS prueft VOR dem Loeschen: abspielbar, Frame dekodierbar, Laenge wie
 Original, Audio erhalten, Aufloesung gleich, Ergebnis kleiner. Scheitert
 eine Pruefung, bleibt das Original unangetastet.
+
+QUALITAET - wichtig zu wissen:
+Alle Varianten sind VERLUSTBEHAFTET. Bei normaler Betrachtung kaum
+unterscheidbar, beim Reinzoomen sieht man Detailverlust (Korn, Hauttextur,
+Laub) - besonders bei den Hardware-Encodern (nvenc/qsv/vaapi), die pro Bit
+schlechter komprimieren als die CPU-Encoder und feine Strukturen glaetten.
+Reihenfolge nach Detailtreue bei gleicher Dateigroesse:
+  hevc (libx265) > av1 (libsvtav1) >> av1nvenc/nvenc (Hardware)
+Wenn Details wichtiger sind als Zeit: --codec hevc oder --codec av1 (CPU).
+Bei Hardware-Encodern hilft ein niedrigerer Wert: --crf 18 statt 22.
+Fuer echte Archivqualitaet gar nicht konvertieren - jede Konvertierung
+verliert Details, die nicht zurueckkommen.
 
 Beispiele:
   ./run.sh convert                     Trockenlauf: was waere zu tun? (aendert nichts)
