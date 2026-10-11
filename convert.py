@@ -260,6 +260,56 @@ def probe(path: Path) -> dict | None:
     }
 
 
+def diagnose_unreadable(path: Path) -> str:
+    """Warum ist diese Datei nicht lesbar? Kurzer, aussagekraeftiger Grund
+    fuer das Protokoll - damit man nicht extra './run.sh fix-videos --why'
+    aufrufen muss. Nutzt die ECHTE ffmpeg/ffprobe-Meldung."""
+    # 1) ffprobe: was sieht er ueberhaupt?
+    try:
+        pr = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries",
+             "stream=codec_type,codec_name", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=60)
+        perr = (pr.stderr or "").strip()
+        streams = (pr.stdout or "").strip()
+    except Exception as e:
+        return f"ffprobe nicht ausfuehrbar: {e}"
+    # 2) Frame-Versuch mit sichtbarem Fehler
+    try:
+        fr = subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error",
+             "-err_detect", "ignore_err", "-fflags", "+genpts",
+             "-i", str(path), "-frames:v", "1",
+             "-f", "image2", "-vcodec", "mjpeg", "-y", os.devnull],
+            capture_output=True, text=True, timeout=120)
+        ferr = (fr.stderr or "").strip()
+        frc = fr.returncode
+    except Exception as e:
+        ferr, frc = str(e), -1
+
+    msg = (ferr.splitlines()[0] if ferr else "") or \
+          (perr.splitlines()[0] if perr else "")
+    low = (msg + " " + perr).lower()
+    # Klassifizieren - das Wichtigste zuerst
+    if "no such file" in low or not path.exists():
+        return "Datei nicht gefunden"
+    if path.stat().st_size == 0:
+        return "Datei ist 0 Byte"
+    if "invalid data found" in low or "moov atom not found" in low:
+        return f"Datei defekt/unvollstaendig ({msg[:90]})"
+    if "decoder" in low and ("not found" in low or "no decoder" in low):
+        return f"Decoder fehlt ({msg[:90]}) -> libavcodec-extra installieren"
+    if "permission denied" in low:
+        return "keine Leserechte"
+    if not streams:
+        return f"ffprobe findet keine Streams ({(perr or msg)[:90]})"
+    if "video" not in streams:
+        return f"kein Video-Stream, nur: {streams.replace(chr(10), ' ')[:70]}"
+    if frc == 0 and not ferr:
+        return "Frame geht JETZT -> './run.sh tag <root> --retry-errors'"
+    return f"Frame-Extraktion scheitert ({msg[:100] or 'rc=' + str(frc)})"
+
+
 def decodes_ok(path: Path) -> bool:
     """Prueft, dass echt dekodiert werden kann (nicht nur Header lesbar)."""
     return common.extract_video_frame(path, 0.0) is not None
@@ -605,7 +655,7 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
         if info is None:
             # Kein Decoder kommt ran (alte flv/rm, defekt) - nicht erst
             # encoden lassen, direkt mit Grund protokollieren.
-            report.add(R_UNREADABLE, rel, "ffprobe liefert keinen Video-Stream")
+            report.add(R_UNREADABLE, rel, diagnose_unreadable(p))
             continue
         if skip_codecs and info["vcodec"].lower() in skip_codecs:
             report.add(R_ALREADY, rel, f"{info['vcodec']}, {_mb(info['size'])}")
@@ -991,7 +1041,7 @@ nicht bestanden / konvertiert).
         info = probe(src)
         if info is None:
             print(f"{label}: SKIP (nicht lesbar - evtl. './run.sh fix-videos')")
-            report.add(R_UNREADABLE, rel_out, "beim Verarbeiten nicht mehr lesbar")
+            report.add(R_UNREADABLE, rel_out, diagnose_unreadable(src))
             skipped += 1
             continue
 
