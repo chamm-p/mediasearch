@@ -288,6 +288,8 @@ Commands:
                     nicht bestanden, konvertiert. --log PFAD / --log '' 
 
   fix-videos [root]          Videos mit Tagging-Fehler per ffmpeg reparieren
+                    --why zeigt pro Problem-Video die ECHTE ffmpeg-Meldung
+                      (fehlender Decoder? Datei defekt? nur Zeitpunkt?)
                     (Trockenlauf; --apply ersetzt Originale mit Backup,
                      --no-reencode nur Remux, --all alle Videos, --limit N)
 
