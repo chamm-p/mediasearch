@@ -62,12 +62,53 @@ class Report:
     def __init__(self, path: Path | None):
         self.path = path
         self.rows: list[tuple[str, str, str]] = []   # (grund, rel, detail)
+        self._live_started = False
+        self._header: dict = {}
+        self._root: Path | None = None
+
+    def begin(self, root: Path, header: dict) -> None:
+        """Lauf-Kopf SOFORT ins Log schreiben und Live-Mitschrift starten.
+
+        Wichtig: vorher wurde das Log erst am Ende geschrieben - bei Strg+C
+        oder einem Absturz war alles verloren, obwohl der Lauf stundenlang
+        gearbeitet hatte. Jetzt landet jede Entscheidung sofort auf der
+        Platte; die gruppierte Zusammenfassung kommt zusaetzlich am Ende."""
+        self._root, self._header = root, header
+        if self.path is None:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.path, "a", encoding="utf-8", errors="replace") as f:
+                f.write("\n\n" + "#" * 70 + "\n")
+                f.write(f"# LAUF {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("#" * 70 + "\n")
+                f.write(f"Root      : {root}\n")
+                for k, v in header.items():
+                    f.write(f"{k:<10}: {v}\n")
+                f.write("\nLIVE-MITSCHRIFT (waehrend der Verarbeitung):\n")
+            self._live_started = True
+        except OSError as e:
+            print(f"WARNUNG: Log nicht schreibbar: {e}")
+
+    def _live(self, reason: str, rel: str, detail: str) -> None:
+        """Eine Zeile sofort anhaengen (zeilengepuffert -> sofort sichtbar,
+        auch mit 'tail -f')."""
+        if not self._live_started or self.path is None:
+            return
+        try:
+            with open(self.path, "a", encoding="utf-8", errors="replace") as f:
+                f.write(f"  [{time.strftime('%H:%M:%S')}] {reason:<26} {rel}"
+                        + (f"   [{detail}]" if detail else "") + "\n")
+        except OSError:
+            pass
 
     def add(self, reason: str, rel: str, detail: str = "") -> None:
         # Zentral absichern: ein Dateiname mit defekten Bytes darf das
         # Log-Schreiben nicht gefaehrden, auch wenn ein Aufrufer _safe()
         # vergisst.
-        self.rows.append((reason, _safe(rel), _safe(detail)))
+        reason, rel, detail = reason, _safe(rel), _safe(detail)
+        self.rows.append((reason, rel, detail))
+        self._live(reason, rel, detail)
 
     def counts(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -109,13 +150,15 @@ class Report:
             # ANHAENGEN: ein einziges Log ueber alle Laeufe, mit klarer
             # Trennung je Lauf. Rotation haelt die Datei in Groesse.
             with open(self.path, "a", encoding="utf-8", errors="replace") as f:
-                f.write("\n\n" + "#" * 70 + "\n")
-                f.write(f"# LAUF {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write("#" * 70 + "\n")
-                f.write(f"Zeitpunkt : {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Root      : {root}\n")
-                for k, v in header.items():
-                    f.write(f"{k:<10}: {v}\n")
+                if not self._live_started:
+                    # begin() wurde nicht aufgerufen -> Kopf hier schreiben
+                    f.write("\n\n" + "#" * 70 + "\n")
+                    f.write(f"# LAUF {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write("#" * 70 + "\n")
+                    f.write(f"Root      : {root}\n")
+                    for k, v in header.items():
+                        f.write(f"{k:<10}: {v}\n")
+                f.write(f"\nLAUF-ENDE {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("\nZusammenfassung:\n")
                 for reason in order:
                     n = len(by.get(reason, []))
@@ -850,7 +893,9 @@ Mit --limit N wird nach N Kandidaten abgebrochen - auch die Pruef-Phase
 stoppt dann (keine unnoetigen ffprobe-Laeufe ueber die restliche Sammlung).
 
 Protokoll: EIN Log (convert.log im Tool-Ordner), jeder Lauf haengt einen
-Abschnitt an. Ab --log-max-mb (default 5 MB) wird zu convert.log.1 rotiert
+Abschnitt an. Es wird LIVE mitgeschrieben (jede Datei sofort, mit Uhrzeit)
+- bei Strg+C oder Absturz bleibt alles erhalten, und man kann mit
+'tail -f convert.log' zusehen. Am Ende folgt die gruppierte Zusammenfassung. Ab --log-max-mb (default 5 MB) wird zu convert.log.1 rotiert
 (3 Archive). Enthaelt alle Dateien
 nach Grund gruppiert (nicht lesbar / bereits effizient / zu klein / QS
 nicht bestanden / konvertiert).
@@ -1017,6 +1062,17 @@ nicht bestanden / konvertiert).
           f"{free_bytes(root)/1e9:.1f} GB")
     if skip_codecs:
         print(f"Ueberspringe bereits: {', '.join(sorted(skip_codecs))}")
+    # Log-Kopf + Live-Mitschrift SOFORT starten, damit bei Strg+C oder
+    # einem Absturz nichts verloren geht (vorher wurde erst am Ende
+    # geschrieben) - und damit man mit 'tail -f convert.log' zusehen kann.
+    report.begin(root, {
+        "Codec": f"{args.codec} ({prof['vcodec']}) "
+                 f"{prof['quality_flag']}={crf} preset={preset or '-'}",
+        "Modus": ("apply" + (" --delete" if args.delete else "")
+                  if args.apply else "Trockenlauf"),
+        "min-mb": args.min_mb,
+        "skip": ", ".join(sorted(skip_codecs)) if skip_codecs else "-",
+    })
     print("\nsammle Videos (ffprobe pro Datei, kann dauern)...")
 
     vids = candidates(root, skip_codecs, args.min_mb, args.limit, report,
