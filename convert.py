@@ -288,6 +288,67 @@ def qs_check(orig: dict, new_path: Path, tol_sec: float) -> tuple[bool, str]:
     return True, "ok"
 
 
+def _is_clean(s: str) -> bool:
+    """True, wenn der String als UTF-8 schreibbar ist (keine defekten Bytes)."""
+    try:
+        s.encode("utf-8")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _safe(s: str) -> str:
+    """Macht beliebige Dateinamen ausgabe- und logbar.
+
+    Dateinamen mit defekter Kodierung liefert os.walk als str mit lone
+    surrogates. Die lassen sich WEDER ins Terminal noch in eine UTF-8-Datei
+    schreiben -> UnicodeEncodeError mitten im Lauf. serve.py hat dafuer
+    dieselbe Absicherung."""
+    if not s:
+        return s or ""
+    if _is_clean(s):
+        return s
+    return s.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def fix_name(rel: str) -> str:
+    """Repariert einen kaputt kodierten Dateinamen (Pfad RELATIV zum Root).
+
+    Defekte Namen kommen als lone surrogates an. Erst werden die Original-
+    Bytes zurueckgeholt (surrogateescape) und als cp1252/latin-1 gelesen -
+    der haeufigste Fall (Umlaute von alten Windows-Systemen auf einem
+    UTF-8-Dateisystem); daraus wird dann korrekt z.B. 'Muenchen' mit echtem
+    Umlaut. Klappt das nicht, werden die defekten Zeichen durch '_' ersetzt.
+    Jeder Pfad-Teil einzeln, damit Verzeichnisnamen unangetastet bleiben,
+    wenn nur der Dateiname betroffen ist."""
+    if _is_clean(rel):
+        return rel
+    parts = []
+    for seg in rel.split(os.sep):
+        if _is_clean(seg):
+            parts.append(seg)
+            continue
+        fixed = None
+        try:
+            raw = seg.encode("utf-8", "surrogateescape")
+        except Exception:
+            raw = None
+        if raw is not None:
+            for enc in ("utf-8", "cp1252", "latin-1"):
+                try:
+                    cand = raw.decode(enc)
+                except (UnicodeDecodeError, LookupError):
+                    continue
+                if _is_clean(cand) and cand.strip():
+                    fixed = cand
+                    break
+        if fixed is None:
+            fixed = seg.encode("utf-8", "replace").decode("utf-8", "replace")
+            fixed = fixed.replace(chr(0xFFFD), "_")
+        parts.append(fixed)
+    return os.sep.join(parts)
+
+
 def _mb(n: int) -> str:
     return f"{n/1e6:.1f}MB"
 
@@ -313,7 +374,8 @@ def trash_size(trash: Path) -> int:
 
 # ---------- DB ----------
 
-def db_update_converted(root: Path, rel: str, new_abs: Path) -> str:
+def db_update_converted(root: Path, rel: str, new_abs: Path,
+                        new_rel: str | None = None) -> str:
     """size/mtime aktualisieren, Tags BEHALTEN. Wichtig: ein normaler
     Re-Scan wuerde die Datei als 'geaendert' sehen und auf pending setzen
     -> alle Tags neu per LLM. Der Bildinhalt ist aber identisch, deshalb
@@ -325,6 +387,17 @@ def db_update_converted(root: Path, rel: str, new_abs: Path) -> str:
                            (rel,)).fetchone()
         if row is None:
             return "nicht in DB"
+        if new_rel and new_rel != rel:
+            # Name wurde repariert -> rel_path + sort_key mitnehmen, sonst
+            # verliert die Datei beim naechsten Scan ihre Tags (sie waere
+            # "verschwunden" und der neue Name "neu").
+            conn.execute(
+                "UPDATE files SET rel_path=?, sort_key=?, size=?, mtime=?, "
+                "content_hash='', phash_int=NULL WHERE id=?",
+                (new_rel, common.natural_key(new_rel), st.st_size,
+                 st.st_mtime, row["id"]))
+            conn.commit()
+            return "aktualisiert + umbenannt"
         conn.execute(
             "UPDATE files SET size=?, mtime=?, content_hash='', phash_int=NULL "
             "WHERE id=?", (st.st_size, st.st_mtime, row["id"]))
@@ -354,7 +427,7 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
                 continue
             if TMP_MARK in p.name:
                 continue
-            rel = str(p.relative_to(root))
+            rel = _safe(str(p.relative_to(root)))
             try:
                 p.stat()
             except OSError as e:
@@ -376,12 +449,12 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
         # Dateien laufen lassen - bei grossen Sammlungen minutenlang umsonst.
         if limit and len(out) >= limit:
             for rest in found[i-1:]:
-                report.add(R_LIMIT, str(rest.relative_to(root)),
+                report.add(R_LIMIT, _safe(str(rest.relative_to(root))),
                            "nicht geprueft (Limit erreicht)")
             print(f"  Limit {limit} erreicht - restliche "
                   f"{len(found) - (i-1)} Dateien nicht mehr geprueft.", flush=True)
             break
-        rel = str(p.relative_to(root))
+        rel = _safe(str(p.relative_to(root)))
         checked = i
         if i % 200 == 0 or i == n:
             print(f"  ...geprueft {i}/{n}", flush=True)
@@ -434,6 +507,11 @@ Platzmangel: faellt der freie Platz unter --reserve-gb, haelt der Lauf an.
 Dann Papierkorb pruefen, '--empty-trash', und den Lauf neu starten -
 bereits konvertierte Videos werden uebersprungen.
 
+Kaputt kodierte Dateinamen (defekte Bytes von alten Windows-Systemen)
+werden beim Konvertieren gleich mitrepariert - der DB-Pfad wandert mit,
+Tags bleiben erhalten. Abschalten mit --no-fix-names. Existiert der
+reparierte Name schon, bleibt der alte (kein Ueberschreiben).
+
 Mit --limit N wird nach N Kandidaten abgebrochen - auch die Pruef-Phase
 stoppt dann (keine unnoetigen ffprobe-Laeufe ueber die restliche Sammlung).
 
@@ -479,6 +557,9 @@ nicht bestanden / konvertiert).
                     help="Pfad fuer das Lauf-Protokoll "
                          "(default: convert-report-<zeit>.log im Tool-Ordner; "
                          "'' = kein Log)")
+    ap.add_argument("--no-fix-names", action="store_true",
+                    help="kaputt kodierte Dateinamen NICHT mitreparieren "
+                         "(Default: beim Konvertieren gleich korrigieren)")
     ap.add_argument("--empty-trash", action="store_true",
                     help="Papierkorb endgueltig loeschen und beenden")
     args = ap.parse_args()
@@ -574,13 +655,14 @@ nicht bestanden / konvertiert).
             print(f"Gruende pro Datei: {written}")
         return
 
-    done = failed = skipped = db_hits = 0
+    done = failed = skipped = db_hits = fixed_names = 0
     saved = 0
     t_start = time.time()
 
     for i, src in enumerate(vids, 1):
         rel = str(src.relative_to(root))
-        label = f"[{i}/{len(vids)}] {rel}"
+        rel_out = _safe(rel)          # nur Ausgabe/Log; rel bleibt der echte Pfad
+        label = f"[{i}/{len(vids)}] {rel_out}"
 
         # --- Platz-Wache VOR jeder Konvertierung ---
         free = free_bytes(root)
@@ -603,7 +685,7 @@ nicht bestanden / konvertiert).
         info = probe(src)
         if info is None:
             print(f"{label}: SKIP (nicht lesbar - evtl. './run.sh fix-videos')")
-            report.add(R_UNREADABLE, rel, "beim Verarbeiten nicht mehr lesbar")
+            report.add(R_UNREADABLE, rel_out, "beim Verarbeiten nicht mehr lesbar")
             skipped += 1
             continue
 
@@ -612,7 +694,7 @@ nicht bestanden / konvertiert).
                       f"{info['width']}x{info['height']}, {info['duration']:.1f}s"
                       f"{'' if info['n_audio'] else ', OHNE Audio'}")
             print(f"{label}: {detail}")
-            report.add(R_DRYRUN, rel, detail)
+            report.add(R_DRYRUN, rel_out, detail)
             done += 1
             continue
 
@@ -627,7 +709,7 @@ nicht bestanden / konvertiert).
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
         except Exception as e:
             print(f"{label}: ffmpeg-Fehler: {e}")
-            report.add(R_ENCODE, rel, str(e)[:160])
+            report.add(R_ENCODE, rel_out, str(e)[:160])
             failed += 1
             if tmp.exists():
                 try: tmp.unlink()
@@ -636,7 +718,7 @@ nicht bestanden / konvertiert).
         if r.returncode != 0 or not tmp.is_file():
             msg = (r.stderr or "").strip().splitlines()[-1:] or ["unbekannt"]
             print(f"{label}: ENCODE fehlgeschlagen: {msg[0][:120]}")
-            report.add(R_ENCODE, rel, msg[0][:160])
+            report.add(R_ENCODE, rel_out, msg[0][:160])
             failed += 1
             if tmp.exists():
                 try: tmp.unlink()
@@ -646,14 +728,29 @@ nicht bestanden / konvertiert).
         ok, why = qs_check(info, tmp, args.tol_sec)
         if not ok:
             print(f"{label}: QS NICHT bestanden ({why}) - Original bleibt")
-            report.add(R_QS, rel, why)
+            report.add(R_QS, rel_out, why)
             failed += 1
             try: tmp.unlink()
             except OSError: pass
             continue
 
         new_size = tmp.stat().st_size
-        # --- Original wegraeumen, dann konvertierte an den Originalpfad ---
+        # --- Zielpfad bestimmen: kaputt kodierte Namen gleich mitreparieren ---
+        # Wir fassen die Datei hier sowieso an, also ist das der richtige
+        # Moment. Kollidiert der reparierte Name mit einer existierenden
+        # Datei, bleibt der alte Name (kein Ueberschreiben!).
+        final_rel, final_abs = rel, src
+        renamed = ""
+        if not args.no_fix_names and not _is_clean(rel):
+            cand_rel = fix_name(rel)
+            cand_abs = root / cand_rel
+            if cand_rel != rel and not cand_abs.exists():
+                final_rel, final_abs = cand_rel, cand_abs
+                renamed = f" [Name repariert: {_safe(cand_rel)}]"
+            elif cand_abs.exists():
+                renamed = " [Name-Fix uebersprungen: Ziel existiert]"
+
+        # --- Original wegraeumen, dann konvertierte an den Zielpfad ---
         try:
             if args.delete:
                 src.unlink()
@@ -661,26 +758,33 @@ nicht bestanden / konvertiert).
                 dest = trash / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(src, dest)      # gleiches Dateisystem -> instant
-            os.replace(tmp, src)           # gleiches Verzeichnis -> instant
+            if final_abs is not src:
+                final_abs.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, final_abs)     # gleiches Verzeichnis -> instant
         except OSError as e:
             print(f"{label}: Ersetzen fehlgeschlagen: {e} - Original bleibt")
-            report.add(R_REPLACE, rel, str(e)[:160])
+            report.add(R_REPLACE, rel_out, str(e)[:160])
             failed += 1
             if tmp.exists():
                 try: tmp.unlink()
                 except OSError: pass
             continue
 
-        dbmsg = db_update_converted(root, common.encode_surrogates(rel), src)
-        if dbmsg == "aktualisiert":
+        dbmsg = db_update_converted(
+            root, common.encode_surrogates(rel), final_abs,
+            new_rel=common.encode_surrogates(final_rel)
+                    if final_rel != rel else None)
+        if dbmsg.startswith("aktualisiert"):
             db_hits += 1
+        if renamed:
+            fixed_names += 1 if "repariert" in renamed else 0
         pct = (1 - new_size / info["size"]) * 100
         saved += info["size"] - new_size
         done += 1
-        report.add(R_OK, rel,
+        report.add(R_OK, rel_out,
                    f"{_mb(info['size'])} -> {_mb(new_size)} (-{pct:.0f}%)")
         print(f"{label}: {_mb(info['size'])} -> {_mb(new_size)} "
-              f"(-{pct:.0f}%, {time.time()-t0:.0f}s, DB {dbmsg})")
+              f"(-{pct:.0f}%, {time.time()-t0:.0f}s, DB {dbmsg}){renamed}")
 
     # --- Zusammenfassung ---
     print("\n" + "-"*60)
@@ -688,6 +792,9 @@ nicht bestanden / konvertiert).
     if args.apply:
         print(f"Fertig: {done} konvertiert, {failed} fehlgeschlagen, "
               f"{skipped} uebersprungen  ({el/60:.1f} min)")
+        if fixed_names:
+            print(f"Dateinamen repariert: {fixed_names} "
+                  f"(defekte Kodierung korrigiert, DB-Pfad mitgezogen)")
         print(f"Gespart: {saved/1e9:.2f} GB  |  frei jetzt: "
               f"{free_bytes(root)/1e9:.1f} GB")
         if not args.delete and trash.is_dir():

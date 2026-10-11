@@ -280,6 +280,8 @@ Commands:
                     --crf N  --preset X  --limit N (zum Antesten, bricht
                       auch die Pruef-Phase ab)
                     --empty-trash  = Papierkorb endgueltig loeschen
+                    Kaputt kodierte Dateinamen werden mitrepariert
+                      (DB-Pfad wandert mit) - abschaltbar via --no-fix-names
                     Schreibt ein Lauf-Protokoll (convert-report-<zeit>.log)
                     mit allen Dateien nach Grund gruppiert: nicht lesbar
                     (alte flv/rm etc.), bereits effizient, zu klein, QS
