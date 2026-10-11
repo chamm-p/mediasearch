@@ -279,6 +279,9 @@ Commands:
                       10-20x schneller)  --list-encoders zeigt Verfuegbares
                     --crf N  --preset X  --limit N (zum Antesten, bricht
                       auch die Pruef-Phase ab)
+                    --topaz-report = Eignungs-Report fuer Topaz Starlight
+                      Precise (Aufloesung 480p-4K, bpp<0.18); nur Analyse,
+                      Ergebnis auch in topaz-report.txt
                     --min-bpp 0.12 = nur Videos mit Bitrate-Reserve
                       (verrauschte/grobpixelige sind schon sparsam kodiert,
                        dort wird das Ergebnis eher groesser)

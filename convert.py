@@ -830,6 +830,149 @@ def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
 
 # ---------- Hauptlauf ----------
 
+# ---------- Topaz-Starlight-Eignung ----------
+# Kriterien nach Topaz-Doku (Starlight Precise 2.5/2.6) + Erfahrungswerten:
+#   - Eingang <= 4K empfohlen, Ausgabe ist auf 4K begrenzt
+#   - unter 480p NICHT geeignet (dort empfiehlt Topaz "Starlight Mini")
+#   - gedacht fuer "medium to high quality" - sehr schlechtes Material nicht
+#   - bereits scharfes/hochbitratiges Material: lohnt nicht (langsam, kann
+#     Artefakte erfinden)
+#   - interlaced muss vorher deinterlaced werden
+#   - starke Bewegungsunschaerfe wird als Textur gerendert -> schlecht
+# Rechenzeit ist erheblich (~30-45 min pro Quellminute), deshalb ist die
+# Vorauswahl wichtig.
+TOPAZ_MIN_HEIGHT = 480          # darunter: Topaz empfiehlt Starlight Mini
+TOPAZ_MAX_PIXELS = 3840 * 2160  # darueber: Ausgabe waere nicht groesser
+
+
+def topaz_fit(info: dict) -> tuple[str, str]:
+    """Bewertet, ob ein Video fuer Topaz Starlight Precise geeignet ist.
+    Liefert (bewertung, begruendung) mit bewertung in
+    'gut' | 'evtl' | 'nein'."""
+    w, h = info["width"], info["height"]
+    bpp = info["bpp"]
+    px = w * h
+    if h <= 0 or w <= 0:
+        return "nein", "Aufloesung unbekannt"
+    if h < TOPAZ_MIN_HEIGHT:
+        return "nein", (f"{w}x{h} unter 480p - Topaz empfiehlt hier "
+                        f"Starlight Mini, nicht Precise")
+    if px > TOPAZ_MAX_PIXELS:
+        return "nein", (f"{w}x{h} ueber 4K - Ausgabe ist auf 4K begrenzt, "
+                        f"kein Gewinn")
+    if info["duration"] > 0:
+        # Rechenzeit ~30-45 min pro Quellminute -> bei langen Videos warnen
+        est_h = info["duration"] / 60.0 * 37.5 / 60.0
+    else:
+        est_h = 0.0
+    note_time = f", geschaetzt ~{est_h:.1f}h Rechenzeit" if est_h >= 1 else ""
+
+    # bpp als Schaerfe-/Qualitaetsmarker (gleiche Logik wie --min-bpp)
+    if bpp <= 0:
+        return "evtl", f"{w}x{h}, Bitrate unbekannt - Testclip noetig{note_time}"
+    if bpp >= 0.18:
+        return "nein", (f"bpp={bpp:.3f} - schon scharf/hochbitratig, "
+                        f"Starlight lohnt kaum (langsam, kann Details erfinden)")
+    # Hinweis zur Ehrlichkeit: bpp allein kann NICHT erkennen, ob ein Video
+    # "nur" artefaktbehaftet oder schon unrettbar matschig ist. Getestet:
+    # ein echt degradiertes Video (runter- und hochskaliert) und ein
+    # brauchbares lagen beide bei bpp ~0.06. Deshalb gibt es hier KEINE
+    # untere bpp-Schwelle, sondern einen klaren Testclip-Hinweis.
+    return "gut", (f"{w}x{h}, bpp={bpp:.3f} - Aufloesung passt und Bitrate "
+                   f"laesst Artefakte erwarten{note_time}; Testclip "
+                   f"entscheidet (bpp erkennt Matsch nicht)")
+
+
+def cmd_topaz_report(root: Path, limit: int | None, min_mb: float,
+                     out_path: Path | None) -> None:
+    """Report: welche Videos lohnen sich fuer Topaz Starlight Precise?
+    Reine Analyse - aendert nichts."""
+    print(f"Root: {root}")
+    print("Pruefe Videos (ffprobe pro Datei)...\n")
+    rows: list[tuple[str, str, str, int]] = []
+    n = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames
+                       if d != TRASH_NAME and d not in common.EXCLUDE_DIRS]
+        for name in sorted(filenames):
+            p = Path(dirpath) / name
+            if common.media_type(p) != "video" or TMP_MARK in p.name:
+                continue
+            try:
+                if p.stat().st_size < min_mb * 1e6:
+                    continue
+            except OSError:
+                continue
+            n += 1
+            if n % 200 == 0:
+                print(f"  ...{n} geprueft", flush=True)
+            info = probe(p)
+            rel = _safe(str(p.relative_to(root)))
+            if info is None:
+                rows.append(("nein", rel, "nicht lesbar", 0))
+                continue
+            verdict, why = topaz_fit(info)
+            rows.append((verdict, rel, why, info["size"]))
+            if limit and sum(1 for r in rows if r[0] == "gut") >= limit:
+                print(f"  Limit {limit} geeignete gefunden - Abbruch.", flush=True)
+                break
+        else:
+            continue
+        break
+
+    order = {"gut": 0, "evtl": 1, "nein": 2}
+    rows.sort(key=lambda r: (order[r[0]], -r[3]))
+    counts: dict[str, int] = {}
+    for v, _r, _w, _s in rows:
+        counts[v] = counts.get(v, 0) + 1
+
+    lines: list[str] = []
+    lines.append("Topaz Starlight Precise - Eignungs-Report")
+    lines.append(f"Zeitpunkt: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"Root     : {root}")
+    lines.append(f"Geprueft : {n} Videos (ab {min_mb} MB)")
+    lines.append("")
+    lines.append("Kriterien (Topaz-Doku + Erfahrungswerte):")
+    lines.append("  - Aufloesung 480p bis 4K (darunter: Starlight Mini,")
+    lines.append("    darueber: Ausgabe ist auf 4K begrenzt)")
+    lines.append("  - bpp <  0.18 : Artefakte zu erwarten -> Kandidat")
+    lines.append("  - bpp >= 0.18 : schon scharf, lohnt kaum")
+    lines.append("  Grenze der Automatik: bpp erkennt NICHT, ob ein Video nur")
+    lines.append("  artefaktbehaftet oder schon unrettbar matschig ist")
+    lines.append("  (getestet: beide lagen bei bpp ~0.06). Deshalb ist der")
+    lines.append("  Testclip bei jedem Kandidaten unverzichtbar.")
+    lines.append("  - Rechenzeit ca. 30-45 min pro Quellminute!")
+    lines.append("")
+    lines.append("Zusammenfassung:")
+    for v in ("gut", "evtl", "nein"):
+        if counts.get(v):
+            lines.append(f"  {v:<6} {counts[v]}")
+    for v, titel in (("gut", "GEEIGNET"), ("evtl", "VIELLEICHT"),
+                     ("nein", "NICHT GEEIGNET")):
+        items = [r for r in rows if r[0] == v]
+        if not items:
+            continue
+        lines.append("")
+        lines.append("=" * 70)
+        lines.append(f"{titel}  ({len(items)})")
+        lines.append("=" * 70)
+        for _v, rel, why, size in items:
+            lines.append(f"  {rel}")
+            lines.append(f"      {_mb(size)} - {why}")
+
+    text = "\n".join(lines)
+    print(text)
+    if out_path is not None:
+        try:
+            out_path.write_text(text + "\n", encoding="utf-8", errors="replace")
+            print(f"\nReport gespeichert: {out_path}")
+        except OSError as e:
+            print(f"\nWARNUNG: Report nicht speicherbar: {e}")
+    print("\nHinweis: unbedingt zuerst einen 10-20s-Testclip durch Topaz")
+    print("schicken - und Gesichter/Text/Zaehne pruefen, dort erfindet das")
+    print("Modell am ehesten Details.")
+
+
 def cmd_restore_trash(root: Path, trash: Path, dry: bool,
                       only: str | None) -> None:
     """Stellt Originale aus dem Papierkorb wieder her.
@@ -1059,6 +1202,9 @@ nicht bestanden / konvertiert).
     ap.add_argument("--log-max-mb", type=float, default=5.0,
                     help="Logrotate: ab dieser Groesse wird convert.log zu "
                          "convert.log.1 weggedreht (default 5 MB, 3 Archive)")
+    ap.add_argument("--topaz-report", action="store_true",
+                    help="Report: welche Videos lohnen sich fuer Topaz "
+                         "Starlight Precise? (nur Analyse, aendert nichts)")
     ap.add_argument("--restore-trash", action="store_true",
                     help="Originale aus dem Papierkorb wiederherstellen "
                          "(Trockenlauf; mit --apply wirklich ausfuehren)")
@@ -1111,6 +1257,12 @@ nicht bestanden / konvertiert).
 
     root = resolve_root(args.root)
     trash = root / TRASH_NAME
+
+    # --- Topaz-Eignungs-Report ---
+    if args.topaz_report:
+        out = (HERE / "topaz-report.txt") if args.log != "" else None
+        cmd_topaz_report(root, args.limit, args.min_mb, out)
+        return
 
     # --- Papierkorb wiederherstellen ---
     if args.restore_trash:
