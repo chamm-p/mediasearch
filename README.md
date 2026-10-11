@@ -115,6 +115,10 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 ./run.sh convert               # Videos komprimieren (Trockenlauf)
 ./run.sh convert --apply       # wirklich konvertieren (QS, dann Papierkorb)
 ./run.sh convert --empty-trash # Papierkorb endgueltig loeschen
+# convert schreibt ein Protokoll: convert-report-<zeit>.log
+#   -> welche Dateien nicht lesbar waren (alte flv/rm, defekt),
+#      welche bereits effizient kodiert sind, welche zu klein,
+#      welche die QS nicht bestanden haben
 ./run.sh fix-videos            # kaputte Videos per ffmpeg reparieren
 ./run.sh diag                  # Scan-/DB-Diagnose
 ./run.sh db-check              # DB-Integritaet + Backups

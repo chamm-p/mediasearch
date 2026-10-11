@@ -38,6 +38,83 @@ HERE = Path(__file__).resolve().parent
 TRASH_NAME = ".mediasearch-converted-originals"   # auch in common.EXCLUDE_DIRS!
 TMP_MARK = ".msconv"
 
+# Gruende, warum ein Video nicht konvertiert wurde (fuer den Report).
+# 'ok' = konvertiert. Alles andere landet im Log mit Begruendung.
+R_OK         = "konvertiert"
+R_ALREADY    = "bereits effizient"      # schon hevc/av1 - kein Handlungsbedarf
+R_TOO_SMALL  = "zu klein"               # unter --min-mb
+R_UNREADABLE = "nicht lesbar"           # ffprobe/Decoder scheitert (flv, rm, ...)
+R_ENCODE     = "encode fehlgeschlagen"  # ffmpeg-Fehler
+R_QS         = "QS nicht bestanden"     # Laenge/Audio/Aufloesung/groesser
+R_REPLACE    = "ersetzen fehlgeschlagen"
+
+
+class Report:
+    """Sammelt pro Datei das Ergebnis und schreibt am Ende ein Log, das nach
+    Grund gruppiert ist - damit man bei tausenden Videos sieht, was warum
+    liegen geblieben ist (z.B. alte flv/rm-Dateien, die kein Decoder mag)."""
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self.rows: list[tuple[str, str, str]] = []   # (grund, rel, detail)
+
+    def add(self, reason: str, rel: str, detail: str = "") -> None:
+        self.rows.append((reason, rel, detail))
+
+    def counts(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for reason, _rel, _d in self.rows:
+            out[reason] = out.get(reason, 0) + 1
+        return out
+
+    def write(self, root: Path, header: dict) -> Path | None:
+        """Schreibt das Log. Konvertierte kommen mit rein (Nachvollzieh-
+        barkeit), die Problemfaelle stehen aber zuerst."""
+        if self.path is None:
+            return None
+        order = [R_UNREADABLE, R_QS, R_ENCODE, R_REPLACE, R_ALREADY,
+                 R_TOO_SMALL, R_OK]
+        by: dict[str, list[tuple[str, str]]] = {}
+        for reason, rel, detail in self.rows:
+            by.setdefault(reason, []).append((rel, detail))
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.path, "w", encoding="utf-8", errors="replace") as f:
+                f.write("mediasearch convert - Lauf-Protokoll\n")
+                f.write(f"Zeitpunkt : {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Root      : {root}\n")
+                for k, v in header.items():
+                    f.write(f"{k:<10}: {v}\n")
+                f.write("\nZusammenfassung:\n")
+                for reason in order:
+                    n = len(by.get(reason, []))
+                    if n:
+                        f.write(f"  {reason:<24} {n}\n")
+                for reason in order:
+                    items = by.get(reason)
+                    if not items:
+                        continue
+                    f.write(f"\n{'='*70}\n{reason.upper()}  ({len(items)})\n"
+                            f"{'='*70}\n")
+                    if reason == R_UNREADABLE:
+                        f.write("Diese Dateien konnte kein Decoder oeffnen "
+                                "(alte Formate wie flv/rm, oder defekt).\n"
+                                "-> Reparaturversuch: ./run.sh fix-videos\n\n")
+                    elif reason == R_ALREADY:
+                        f.write("Schon effizient kodiert (hevc/av1) - "
+                                "absichtlich uebersprungen, erneutes Encoden\n"
+                                "wuerde nur Qualitaet kosten.\n\n")
+                    elif reason == R_QS:
+                        f.write("Konvertierung lief, hat aber die "
+                                "Qualitaetssicherung nicht bestanden.\n"
+                                "Das Original ist unangetastet geblieben.\n\n")
+                    for rel, detail in sorted(items):
+                        f.write(f"  {rel}" + (f"   [{detail}]" if detail else "") + "\n")
+            return self.path
+        except OSError as e:
+            print(f"WARNUNG: Log konnte nicht geschrieben werden: {e}")
+            return None
+
 
 # ---------- Root ----------
 
@@ -202,12 +279,15 @@ def db_update_converted(root: Path, rel: str, new_abs: Path) -> str:
 
 # ---------- Kandidaten ----------
 
-def candidates(root: Path, skip_codecs: set[str] | None,
-               min_mb: float, limit: int | None) -> list[Path]:
+def candidates(root: Path, skip_codecs: set[str] | None, min_mb: float,
+               limit: int | None, report: "Report") -> list[Path]:
     """Alle Videos unter root (rekursiv), ohne Papierkorb und Temp-Reste.
     skip_codecs: bereits effizient kodierte Videos AUSSCHLIESSEN (z.B. hevc/av1
-    nicht nochmal durch den Encoder schicken - das kostet nur Qualitaet)."""
-    out: list[Path] = []
+    nicht nochmal durch den Encoder schicken - das kostet nur Qualitaet).
+
+    Uebersprungene werden im Report mit Grund vermerkt (nicht still verworfen),
+    damit man hinterher sieht, warum eine Datei nicht angefasst wurde."""
+    found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames
                        if d != TRASH_NAME and d not in common.EXCLUDE_DIRS]
@@ -217,25 +297,42 @@ def candidates(root: Path, skip_codecs: set[str] | None,
                 continue
             if TMP_MARK in p.name:
                 continue
+            rel = str(p.relative_to(root))
             try:
-                if p.stat().st_size < min_mb * 1e6:
-                    continue
-            except OSError:
+                p.stat()
+            except OSError as e:
+                report.add(R_UNREADABLE, rel, f"stat: {e}")
                 continue
-            out.append(p)
-    out.sort()
-    if skip_codecs:
-        filtered = []
-        for p in out:
-            info = probe(p)
-            if info is None:
-                filtered.append(p)   # nicht lesbar -> spaeter als SKIP melden
-                continue
-            if info["vcodec"].lower() in skip_codecs:
-                continue             # schon effizient -> ueberspringen
-            filtered.append(p)
-        out = filtered
+            found.append(p)
+    found.sort()
+
+    # Reihenfolge der Pruefungen ist wichtig fuer die Aussagekraft des Logs:
+    # zuerst LESBARKEIT (sonst wuerde eine unlesbare kleine Datei als
+    # "zu klein" protokolliert und der echte Grund waere verschleiert),
+    # dann Codec, dann Groesse.
+    out: list[Path] = []
+    n = len(found)
+    for i, p in enumerate(found, 1):
+        rel = str(p.relative_to(root))
+        if i % 200 == 0 or i == n:
+            print(f"  ...geprueft {i}/{n}", flush=True)
+        info = probe(p)
+        if info is None:
+            # Kein Decoder kommt ran (alte flv/rm, defekt) - nicht erst
+            # encoden lassen, direkt mit Grund protokollieren.
+            report.add(R_UNREADABLE, rel, "ffprobe liefert keinen Video-Stream")
+            continue
+        if skip_codecs and info["vcodec"].lower() in skip_codecs:
+            report.add(R_ALREADY, rel, f"{info['vcodec']}, {_mb(info['size'])}")
+            continue
+        if info["size"] < min_mb * 1e6:
+            report.add(R_TOO_SMALL, rel,
+                       f"{_mb(info['size'])}, {info['vcodec']}")
+            continue
+        out.append(p)
     if limit:
+        for p in out[limit:]:
+            report.add("nicht bearbeitet (--limit)", str(p.relative_to(root)), "")
         out = out[:limit]
     return out
 
@@ -267,6 +364,10 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--tol-sec", type=float, default=0.5,
                     help="erlaubte Laengen-Abweichung in s (default 0.5)")
+    ap.add_argument("--log", default=None,
+                    help="Pfad fuer das Lauf-Protokoll "
+                         "(default: convert-report-<zeit>.log im Tool-Ordner; "
+                         "'' = kein Log)")
     ap.add_argument("--empty-trash", action="store_true",
                     help="Papierkorb endgueltig loeschen und beenden")
     args = ap.parse_args()
@@ -290,6 +391,15 @@ def main() -> None:
     skip = {c.strip().lower() for c in args.skip_codecs.split(",") if c.strip()}
     skip_codecs = skip or None
 
+    # Lauf-Protokoll: Default in den Tool-Ordner (nicht in die Mediathek).
+    if args.log is None:
+        log_path = HERE / f"convert-report-{time.strftime('%Y%m%d-%H%M%S')}.log"
+    elif args.log == "":
+        log_path = None
+    else:
+        log_path = Path(args.log).expanduser()
+    report = Report(log_path)
+
     print(f"Wurzelverzeichnis: {root}")
     print(f"Codec: {args.codec} (crf={crf}, preset={preset})")
     print(f"Modus: {'APPLY' if args.apply else 'Trockenlauf (keine Aenderung)'}"
@@ -302,10 +412,25 @@ def main() -> None:
         print(f"Ueberspringe bereits: {', '.join(sorted(skip_codecs))}")
     print("\nsammle Videos (ffprobe pro Datei, kann dauern)...")
 
-    vids = candidates(root, skip_codecs, args.min_mb, args.limit)
-    print(f"Kandidaten: {len(vids)}\n")
+    vids = candidates(root, skip_codecs, args.min_mb, args.limit, report)
+    pre = report.counts()
+    print(f"\nKandidaten: {len(vids)}")
+    if pre:
+        print("Uebersprungen beim Sammeln:")
+        for reason, n in sorted(pre.items()):
+            print(f"  {reason:<24} {n}")
+    print()
     if not vids:
         print("Nichts zu konvertieren.")
+        # Log trotzdem schreiben - genau hier will man die Gruende sehen.
+        written = report.write(root, {
+            "Codec": f"{args.codec} crf={crf} preset={preset}",
+            "Modus": "apply" if args.apply else "Trockenlauf",
+            "min-mb": args.min_mb,
+            "skip": ", ".join(sorted(skip_codecs)) if skip_codecs else "-",
+        })
+        if written:
+            print(f"Gruende pro Datei: {written}")
         return
 
     done = failed = skipped = db_hits = 0
@@ -337,13 +462,16 @@ def main() -> None:
         info = probe(src)
         if info is None:
             print(f"{label}: SKIP (nicht lesbar - evtl. './run.sh fix-videos')")
+            report.add(R_UNREADABLE, rel, "beim Verarbeiten nicht mehr lesbar")
             skipped += 1
             continue
 
         if not args.apply:
-            print(f"{label}: {_mb(info['size'])}, {info['vcodec']}, "
-                  f"{info['width']}x{info['height']}, {info['duration']:.1f}s"
-                  f"{'' if info['n_audio'] else ', OHNE Audio'}")
+            detail = (f"{_mb(info['size'])}, {info['vcodec']}, "
+                      f"{info['width']}x{info['height']}, {info['duration']:.1f}s"
+                      f"{'' if info['n_audio'] else ', OHNE Audio'}")
+            print(f"{label}: {detail}")
+            report.add("wuerde konvertiert", rel, detail)
             done += 1
             continue
 
@@ -358,6 +486,7 @@ def main() -> None:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
         except Exception as e:
             print(f"{label}: ffmpeg-Fehler: {e}")
+            report.add(R_ENCODE, rel, str(e)[:160])
             failed += 1
             if tmp.exists():
                 try: tmp.unlink()
@@ -366,6 +495,7 @@ def main() -> None:
         if r.returncode != 0 or not tmp.is_file():
             msg = (r.stderr or "").strip().splitlines()[-1:] or ["unbekannt"]
             print(f"{label}: ENCODE fehlgeschlagen: {msg[0][:120]}")
+            report.add(R_ENCODE, rel, msg[0][:160])
             failed += 1
             if tmp.exists():
                 try: tmp.unlink()
@@ -375,6 +505,7 @@ def main() -> None:
         ok, why = qs_check(info, tmp, args.tol_sec)
         if not ok:
             print(f"{label}: QS NICHT bestanden ({why}) - Original bleibt")
+            report.add(R_QS, rel, why)
             failed += 1
             try: tmp.unlink()
             except OSError: pass
@@ -392,6 +523,7 @@ def main() -> None:
             os.replace(tmp, src)           # gleiches Verzeichnis -> instant
         except OSError as e:
             print(f"{label}: Ersetzen fehlgeschlagen: {e} - Original bleibt")
+            report.add(R_REPLACE, rel, str(e)[:160])
             failed += 1
             if tmp.exists():
                 try: tmp.unlink()
@@ -404,6 +536,8 @@ def main() -> None:
         pct = (1 - new_size / info["size"]) * 100
         saved += info["size"] - new_size
         done += 1
+        report.add(R_OK, rel,
+                   f"{_mb(info['size'])} -> {_mb(new_size)} (-{pct:.0f}%)")
         print(f"{label}: {_mb(info['size'])} -> {_mb(new_size)} "
               f"(-{pct:.0f}%, {time.time()-t0:.0f}s, DB {dbmsg})")
 
@@ -428,6 +562,26 @@ def main() -> None:
     else:
         print(f"Trockenlauf: {done} Kandidaten, {skipped} nicht lesbar ({el/60:.1f} min)")
         print("-> Konvertieren:  ./run.sh convert --apply")
+
+    # --- Lauf-Protokoll schreiben ---
+    counts = report.counts()
+    problems = sum(n for r, n in counts.items()
+                   if r in (R_UNREADABLE, R_ENCODE, R_QS, R_REPLACE))
+    written = report.write(root, {
+        "Codec": f"{args.codec} crf={crf} preset={preset}",
+        "Modus": ("apply" + (" --delete" if args.delete else "")
+                  if args.apply else "Trockenlauf"),
+        "min-mb": args.min_mb,
+        "skip": ", ".join(sorted(skip_codecs)) if skip_codecs else "-",
+    })
+    if counts:
+        print("\nProtokoll:")
+        for reason, n in sorted(counts.items()):
+            print(f"  {reason:<26} {n}")
+    if written:
+        print(f"\nDetails pro Datei: {written}")
+        if problems:
+            print(f"  darin {problems} Problemfaelle (nicht lesbar / QS / encode)")
 
 
 if __name__ == "__main__":

@@ -277,6 +277,10 @@ Commands:
                     freie Platz unter --reserve-gb faellt (default 10).
                     --codec hevc|av1  --crf N  --preset X  --limit N
                     --empty-trash  = Papierkorb endgueltig loeschen
+                    Schreibt ein Lauf-Protokoll (convert-report-<zeit>.log)
+                    mit allen Dateien nach Grund gruppiert: nicht lesbar
+                    (alte flv/rm etc.), bereits effizient, zu klein, QS
+                    nicht bestanden, konvertiert. --log PFAD / --log '' 
 
   fix-videos [root]          Videos mit Tagging-Fehler per ffmpeg reparieren
                     (Trockenlauf; --apply ersetzt Originale mit Backup,
