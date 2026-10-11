@@ -157,7 +157,18 @@ def probe(path: Path) -> dict | None:
     aus = [s for s in d.get("streams", []) if s.get("codec_type") == "audio"]
     if not vs:
         return None
-    v = vs[0]
+    # Eingebettete Cover-Bilder/Thumbnails meldet ffprobe ebenfalls als
+    # codec_type=video (z.B. 120x90 png mit disposition attached_pic). Wuerde
+    # man einfach vs[0] nehmen, bekaeme man die Aufloesung des VORSCHAUBILDS
+    # -> QS meldet faelschlich "Aufloesung weicht ab".
+    real = [x for x in vs
+            if not (x.get("disposition", {}) or {}).get("attached_pic")
+            and (x.get("codec_name") or "") not in ("png", "mjpeg", "bmp", "gif")]
+    if not real:
+        real = vs           # nur Cover vorhanden -> nichts zu filtern
+    # groesster echter Stream = das eigentliche Video
+    v = max(real, key=lambda x: (int(x.get("width") or 0) * int(x.get("height") or 0)))
+    n_cover = len(vs) - len(real)
     dur = 0.0
     for src in (d.get("format", {}).get("duration"), v.get("duration")):
         try:
@@ -174,6 +185,8 @@ def probe(path: Path) -> dict | None:
         "n_audio": len(aus),
         "audio_channels": sum(int(a.get("channels") or 0) for a in aus),
         "size": path.stat().st_size,
+        "n_cover": n_cover,          # eingebettete Thumbnails
+        "v_index": int(v.get("index") or 0),
     }
 
 
@@ -238,13 +251,20 @@ def available_encoders() -> set[str]:
 
 
 def build_encode_cmd(src: Path, dst: Path, codec: str, quality: int,
-                     preset: str) -> list[str]:
-    """ffmpeg-Kommando. -map 0 + -c:a copy: ALLE Streams und Audio
-    unveraendert uebernehmen (kein Qualitaetsverlust beim Ton, schneller)."""
+                     preset: str, v_index: int = 0) -> list[str]:
+    """ffmpeg-Kommando. Audio/Untertitel werden unveraendert kopiert
+    (-c:a copy), nur das Video wird neu kodiert.
+
+    WICHTIG: gemappt wird genau EIN Video-Stream (v_index) + alle Audio-
+    und Untertitel-Streams - NICHT '-map 0'. Sonst wuerde ein eingebettetes
+    Cover-Bild als zweiter Video-Stream mitkodiert; das laesst den Encode
+    fehlschlagen bzw. blaeht das Ergebnis auf."""
     prof = ENCODERS[codec]
     cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error"]
     cmd += prof.get("pre_input", [])
-    cmd += ["-i", str(src), "-map", "0", "-map_metadata", "0"]
+    cmd += ["-i", str(src),
+            "-map", f"0:{v_index}", "-map", "0:a?", "-map", "0:s?",
+            "-map_metadata", "0"]
     if prof.get("filter"):
         cmd += ["-vf", prof["filter"]]
     cmd += ["-c:v", prof["vcodec"], prof["quality_flag"], str(quality)]
@@ -704,7 +724,8 @@ nicht bestanden / konvertiert).
             except OSError: pass
 
         t0 = time.time()
-        cmd = build_encode_cmd(src, tmp, args.codec, crf, preset)
+        cmd = build_encode_cmd(src, tmp, args.codec, crf, preset,
+                               v_index=info.get("v_index", 0))
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
         except Exception as e:
