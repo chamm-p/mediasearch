@@ -64,7 +64,10 @@ class Report:
         self.rows: list[tuple[str, str, str]] = []   # (grund, rel, detail)
 
     def add(self, reason: str, rel: str, detail: str = "") -> None:
-        self.rows.append((reason, rel, detail))
+        # Zentral absichern: ein Dateiname mit defekten Bytes darf das
+        # Log-Schreiben nicht gefaehrden, auch wenn ein Aufrufer _safe()
+        # vergisst.
+        self.rows.append((reason, _safe(rel), _safe(detail)))
 
     def counts(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -182,17 +185,28 @@ def save_skiplist(root: Path, data: dict) -> None:
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False),
-                       encoding="utf-8")
+        # errors="replace" als letzte Absicherung: die Merkliste darf NIE
+        # den ganzen Lauf abbrechen, selbst wenn doch ein defektes Zeichen
+        # durchkommt.
+        payload = json.dumps(data, indent=1, ensure_ascii=False)
+        with open(tmp, "w", encoding="utf-8", errors="replace") as f:
+            f.write(payload)
         tmp.replace(p)
-    except OSError as e:
+    except (OSError, ValueError, UnicodeError) as e:
         print(f"WARNUNG: Merkliste nicht speicherbar: {e}")
 
 
 def skip_key(rel: str, size: int, mtime: float) -> str:
     """rel + Groesse + mtime(sekundengenau). Aendert sich die Datei,
-    passt der Schluessel nicht mehr -> erneuter Versuch."""
-    return f"{rel}|{size}|{int(mtime)}"
+    passt der Schluessel nicht mehr -> erneuter Versuch.
+
+    WICHTIG: rel laeuft durch _safe(). Dateinamen mit defekten Bytes
+    (lone surrogates) lassen sich NICHT als JSON/UTF-8 schreiben - sonst
+    knallt save_skiplist mit UnicodeEncodeError. Da _safe() hier zentral
+    angewendet wird, erzeugen Schreib- und Lese-Pfad garantiert denselben
+    Schluessel. Die Ersetzung ist deterministisch, Kollisionen sind
+    durch Groesse+mtime praktisch ausgeschlossen."""
+    return f"{_safe(rel)}|{size}|{int(mtime)}"
 
 
 # ---------- ffprobe / Medien-Infos ----------
