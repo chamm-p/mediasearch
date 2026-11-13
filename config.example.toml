@@ -66,7 +66,7 @@ video = ""                  # z.B. "mpv --fs"
 # Jedes Video gilt beim Start sofort als "gesehen".
 [player]
 # key_next     = "c"         # naechstes Video
-# key_fav      = "f"         # als Favorit markieren + naechstes Video
+# key_fav      = "f"         # Favorit an/aus (bleibt beim Video)
 # key_prev     = "z"         # vorheriges Video
 # key_unfav    = "F"         # Favorit entfernen (Shift+f), bleibt beim Video
 # favorite_tag = "favorit"   # manueller Tag fuer key_fav

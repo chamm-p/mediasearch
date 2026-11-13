@@ -130,7 +130,7 @@ mp.register_event("file-loaded", apply_default_once)
 -- Nur aktiv, wenn der Server vs_sid/vs_url mitgibt (sonst - z.B. beim
 -- einzelnen Video aus dem Dateimanager - bleiben alle mpv-Tasten normal).
 --   vs_next (Default c) : naechstes Video
---   vs_fav  (Default f) : als Favorit markieren + naechstes Video
+--   vs_fav  (Default f) : Favorit an/aus (bleibt beim Video)
 --   vs_prev (Default z) : vorheriges Video
 --   vs_unfav (Default F = Shift+f) : Favorit entfernen (bleibt beim Video)
 --   Ist ein Video schon Favorit, zeigt mpv beim Laden "★ Favorit".
@@ -193,17 +193,16 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
                                      fav and "   ★ Favorit" or ""), fav and 3 or 2)
     end
 
-    local function go_next(prefix)
+    local function go_next()
         local pos, cnt = pos_count()
         if pos + 1 >= cnt then
-            mp.osd_message((prefix or "") .. "Letztes Video - q/ESC beendet", 3)
+            mp.osd_message("Letztes Video - q/ESC beendet", 3)
             return
         end
         mp.commandv("playlist-next", "force")
-        if prefix then mp.add_timeout(0.4, function() info(prefix) end) end
     end
 
-    mp.add_forced_key_binding(key_nx, "vs-next", function() go_next(nil) end)
+    mp.add_forced_key_binding(key_nx, "vs-next", go_next)
 
     mp.add_forced_key_binding(key_pv, "vs-prev", function()
         local pos = pos_count()
@@ -227,8 +226,14 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
 
     mp.add_forced_key_binding(key_fav, "vs-fav", function()
         local pos = pos_count()
-        post("fav", pos)                 -- Position des AKTUELLEN Videos
-        go_next("Favorit ★  ")
+        -- Server entscheidet anhand der DB (kein veralteter Lua-Zustand)
+        post("toggle", pos, function(r)
+            if r.fav then
+                mp.osd_message("★ Favorit", 2)
+            else
+                mp.osd_message("Favorit entfernt", 2)
+            end
+        end)
     end)
 
     -- Jeder neu geladene Eintrag -> 'gesehen' + Wechsel melden. Der Server

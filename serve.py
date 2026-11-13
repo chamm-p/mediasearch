@@ -1909,7 +1909,8 @@ _KEY_RE = re.compile(r"^[A-Za-z0-9_+\-]{1,24}$")   # mpv-Tastenname, ohne Komma/
 
 def _player_cfg() -> dict:
     """[player] aus config.toml: Tasten des Video-Abspielmodus + Favoriten-Tag.
-    Defaults c/f/z, F (Shift+f) = Favorit entfernen. ACHTUNG: f und z sind in mpv vorbelegt (f=Vollbild,
+    Defaults c = weiter, f = Favorit an/aus, z = zurueck, F (Shift+f) =
+    Favorit entfernen. ACHTUNG: f und z sind in mpv vorbelegt (f=Vollbild,
     z=Untertitel-Verzoegerung) und werden NUR im Abspielmodus ueberschrieben;
     Vollbild geht dort weiter per Doppelklick."""
     cfg = (load_config().get("player", {}) or {})
@@ -2049,7 +2050,8 @@ def api_vslideshow(payload: dict) -> dict:
 @app.post("/api/vs/event")
 def api_vs_event(payload: dict) -> dict:
     """Meldungen des Lua-Scripts. payload: {sid, ev, pos, tag?}
-    ev: start (Video geladen) | fav (Favorit setzen) | unfav (entfernen).
+    ev: start (Video geladen) | toggle (Favorit an/aus, Taste f) |
+        fav (setzen) | unfav (entfernen, Taste F).
     Antwort enthaelt immer 'fav' (ist das Video jetzt Favorit?) - damit
     zeigt mpv beim Laden '★ Favorit' an."""
     sid = str(payload.get("sid") or "")
@@ -2058,7 +2060,7 @@ def api_vs_event(payload: dict) -> dict:
         pos = int(payload.get("pos"))
     except (TypeError, ValueError):
         raise HTTPException(400, "pos fehlt")
-    if ev not in ("start", "fav", "unfav"):
+    if ev not in ("start", "fav", "unfav", "toggle"):
         raise HTTPException(400, f"unbekanntes Event {ev!r}")
     tag = str(payload.get("tag") or _player_cfg()["favorite_tag"])
     noop = False
@@ -2083,6 +2085,8 @@ def api_vs_event(payload: dict) -> dict:
         if noop:
             res["noop"] = True
         return res
+    if ev == "toggle":
+        ev = "unfav" if _has_manual_tag(root, fid, tag) else "fav"
     canon, changed = _apply_manual_tag(root, [fid], tag,
                                        "add" if ev == "fav" else "remove")
     _bump_view_stamp()
