@@ -133,6 +133,7 @@ mp.register_event("file-loaded", apply_default_once)
 --   vs_fav  (Default f) : Favorit an/aus (bleibt beim Video)
 --   vs_prev (Default z) : vorheriges Video
 --   vs_unfav (Default F = Shift+f) : Favorit entfernen (bleibt beim Video)
+--   vs_copy (Default k) : Video nach [player] copy_dir KOPIEREN (Original bleibt)
 --   Favoriten tragen DAUERHAFT einen grossen goldenen Stern oben rechts.
 --   q / ESC             : Abspielmodus beenden
 -- Jeder Videowechsel wird an den Server gemeldet: dort wird das Video SOFORT
@@ -146,23 +147,29 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
     local key_fav = mp.get_opt("vs_fav") or "f"
     local key_pv  = mp.get_opt("vs_prev") or "z"
     local key_unf = mp.get_opt("vs_unfav") or "F"
+    local key_cp  = mp.get_opt("vs_copy") or "k"
     local utils   = require("mp.utils")
     local favtag  = mp.get_opt("vs_favtag") or "favorit"
 
     -- HTTP-POST ueber Python (ist auf dem Zielsystem sicher vorhanden, curl
     -- nicht unbedingt). Asynchron: die Wiedergabe wartet nie auf den Server.
+    -- Server-Fehler (HTTP 4xx/5xx) -> Antwort-JSON auf stdout, Exitcode 2,
+    -- damit mpv die Meldung (z.B. "Zielordner existiert nicht") anzeigen kann.
     local post_code = table.concat({
-        "import sys,json,urllib.request",
+        "import sys,json,urllib.request,urllib.error",
         "d=json.dumps({'sid':sys.argv[2],'ev':sys.argv[3],'pos':int(sys.argv[4]),'tag':sys.argv[5]}).encode()",
         "r=urllib.request.Request(sys.argv[1],d,{'Content-Type':'application/json'})",
-        "print(urllib.request.urlopen(r,timeout=10).read().decode())",
+        "try:",
+        "    print(urllib.request.urlopen(r,timeout=float(sys.argv[6])).read().decode())",
+        "except urllib.error.HTTPError as e:",
+        "    print(e.read().decode()); sys.exit(2)",
     }, "\n")
 
-    local function post(ev, pos, on_ok)
+    local function post(ev, pos, on_ok, timeout, on_err)
         mp.command_native_async({
             name = "subprocess",
             args = { vs_py, "-c", post_code, vs_url, vs_sid, ev,
-                     tostring(pos), favtag },
+                     tostring(pos), favtag, tostring(timeout or 10) },
             playback_only = false,     -- nicht abbrechen, wenn das Video wechselt
             capture_stdout = true,
             capture_stderr = true,
@@ -174,8 +181,12 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
                 end
             else
                 mp.msg.warn("vs post " .. ev .. " fehlgeschlagen: "
-                            .. tostring(err or (res and res.stderr) or "?"))
-                if ev == "fav" or ev == "unfav" or ev == "toggle" then
+                            .. tostring(err or (res and ((res.stdout or "") .. (res.stderr or ""))) or "?"))
+                local detail = res and utils.parse_json(res.stdout or "")
+                detail = (type(detail) == "table" and detail.detail) or "Server nicht erreichbar"
+                if on_err then
+                    on_err(tostring(detail))
+                elseif ev == "fav" or ev == "unfav" or ev == "toggle" then
                     mp.osd_message("Favorit konnte NICHT gespeichert werden", 3)
                 end
             end
@@ -228,6 +239,25 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
         mp.commandv("playlist-prev", "force")
     end)
 
+    mp.add_forced_key_binding(key_cp, "vs-copy", function()
+        local pos = pos_count()
+        local name = mp.get_property("filename") or "Video"
+        mp.osd_message("Kopiere " .. name .. " ...", 3)
+        -- grosse Videos/Netzlaufwerk: bis zu 1 h warten; die Wiedergabe laeuft
+        -- weiter, man kann auch schon zum naechsten Video wechseln
+        post("copy", pos, function(r)
+            if r.busy then
+                mp.osd_message("Kopie laeuft bereits: " .. (r.name or name), 3)
+            elseif r.skipped then
+                mp.osd_message("Schon kopiert: " .. (r.name or name), 3)
+            else
+                mp.osd_message("Kopiert ✓  " .. (r.dest or name), 4)
+            end
+        end, 3600, function(detail)
+            mp.osd_message("Kopieren fehlgeschlagen: " .. detail, 6)
+        end)
+    end)
+
     mp.add_forced_key_binding(key_unf, "vs-unfav", function()
         local pos = pos_count()
         post("unfav", pos, function(r)
@@ -269,5 +299,6 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
     end)
 
     mp.msg.info(string.format("Video-Abspielmodus: %s=weiter %s=Favorit %s=zurueck "
-                              .. "%s=Favorit entfernen", key_nx, key_fav, key_pv, key_unf))
+                              .. "%s=Favorit entfernen %s=kopieren",
+                              key_nx, key_fav, key_pv, key_unf, key_cp))
 end

@@ -8,6 +8,7 @@ import os
 import random
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -1910,13 +1911,13 @@ _KEY_RE = re.compile(r"^[A-Za-z0-9_+\-]{1,24}$")   # mpv-Tastenname, ohne Komma/
 def _player_cfg() -> dict:
     """[player] aus config.toml: Tasten des Video-Abspielmodus + Favoriten-Tag.
     Defaults c = weiter, f = Favorit an/aus, z = zurueck, F (Shift+f) =
-    Favorit entfernen. ACHTUNG: f und z sind in mpv vorbelegt (f=Vollbild,
+    Favorit entfernen, k = in copy_dir kopieren. ACHTUNG: f und z sind in mpv vorbelegt (f=Vollbild,
     z=Untertitel-Verzoegerung) und werden NUR im Abspielmodus ueberschrieben;
     Vollbild geht dort weiter per Doppelklick."""
     cfg = (load_config().get("player", {}) or {})
     out = {}
     for k, dflt in (("key_next", "c"), ("key_fav", "f"), ("key_prev", "z"),
-                    ("key_unfav", "F")):
+                    ("key_unfav", "F"), ("key_copy", "k")):
         v = str(cfg.get(k, dflt)).strip()
         if not _KEY_RE.match(v):
             logger.warning("config [player] %s=%r ungueltig -> %s", k, v, dflt)
@@ -1924,6 +1925,7 @@ def _player_cfg() -> dict:
         out[k] = v
     out["favorite_tag"] = (str(cfg.get("favorite_tag", "favorit")).strip().lower()
                            or "favorit")
+    out["copy_dir"] = str(cfg.get("copy_dir", "") or "").strip()
     return out
 
 
@@ -2044,6 +2046,7 @@ def api_vslideshow(payload: dict) -> dict:
            "--script-opts-append=vs_fav=" + pc["key_fav"],
            "--script-opts-append=vs_prev=" + pc["key_prev"],
            "--script-opts-append=vs_unfav=" + pc["key_unfav"],
+           "--script-opts-append=vs_copy=" + pc["key_copy"],
            "--script-opts-append=vs_favtag=" + pc["favorite_tag"],
            "--loop-file=inf",
            f"--playlist-start={start_pos}",
@@ -2071,7 +2074,8 @@ def api_vslideshow(payload: dict) -> dict:
 def api_vs_event(payload: dict) -> dict:
     """Meldungen des Lua-Scripts. payload: {sid, ev, pos, tag?}
     ev: start (Video geladen) | toggle (Favorit an/aus, Taste f) |
-        fav (setzen) | unfav (entfernen, Taste F).
+        fav (setzen) | unfav (entfernen, Taste F) |
+        copy (Datei nach [player] copy_dir kopieren, Taste k).
     Antwort enthaelt immer 'fav' (ist das Video jetzt Favorit?) - damit
     zeigt mpv beim Laden '★ Favorit' an."""
     sid = str(payload.get("sid") or "")
@@ -2080,7 +2084,7 @@ def api_vs_event(payload: dict) -> dict:
         pos = int(payload.get("pos"))
     except (TypeError, ValueError):
         raise HTTPException(400, "pos fehlt")
-    if ev not in ("start", "fav", "unfav", "toggle"):
+    if ev not in ("start", "fav", "unfav", "toggle", "copy"):
         raise HTTPException(400, f"unbekanntes Event {ev!r}")
     tag = str(payload.get("tag") or _player_cfg()["favorite_tag"])
     noop = False
@@ -2098,6 +2102,8 @@ def api_vs_event(payload: dict) -> dict:
             else:
                 _vs_book(sess, time.time())   # vorheriges Video buchen
                 sess["cur"] = fid
+    if ev == "copy":
+        return _vs_copy(root, fid)
     if ev == "start":
         if not noop:
             mark_viewed(root, [fid])
@@ -2114,6 +2120,73 @@ def api_vs_event(payload: dict) -> dict:
                 "Favorit" if ev == "fav" else "Favorit entfernt", fid, canon, changed)
     return {"ok": True, "id": fid, "tag": canon, "changed": changed,
             "fav": ev == "fav"}
+
+
+_VS_COPYING: set[int] = set()        # laufende Kopien (Doppeldruck abfangen)
+
+
+def _vs_copy(root: Path, fid: int) -> dict:
+    """Kopiert (NICHT verschieben) das Video nach [player] copy_dir.
+    Gleichnamige Datei gleicher Groesse = schon kopiert -> nichts tun;
+    andere Datei gleichen Namens -> 'name (2).mp4'. Geschrieben wird erst
+    in '.name.part' und dann umbenannt - nie halbe Dateien im Zielordner."""
+    dest_s = _player_cfg()["copy_dir"]
+    if not dest_s:
+        raise HTTPException(400, "copy_dir nicht gesetzt (config.toml [player])")
+    dest_dir = Path(dest_s).expanduser()
+    if not dest_dir.is_dir():
+        # bewusst NICHT anlegen: bei Tippfehler oder nicht gemountetem
+        # Laufwerk wuerde sonst still auf die Systemplatte kopiert
+        raise HTTPException(400, f"Zielordner existiert nicht: {dest_dir}")
+    conn = connect(root)
+    try:
+        r = conn.execute("SELECT rel_path FROM files WHERE id=?", (fid,)).fetchone()
+    finally:
+        conn.close()
+    if not r:
+        raise HTTPException(404, "Video nicht in der DB")
+    src = root / decode_surrogates(r["rel_path"])
+    if not src.is_file():
+        raise HTTPException(404, f"Datei fehlt: {_safe(src.name)}")
+    size = src.stat().st_size
+    with _VS_LOCK:
+        if fid in _VS_COPYING:
+            return {"ok": True, "busy": True, "name": _safe(src.name)}
+        _VS_COPYING.add(fid)
+    tmp = None
+    try:
+        stem, suf = src.stem, src.suffix
+        dest = dest_dir / src.name
+        n = 2
+        while dest.exists():
+            if dest.is_file() and dest.stat().st_size == size:
+                return {"ok": True, "skipped": True, "name": _safe(dest.name),
+                        "dest": _safe(str(dest))}
+            dest = dest_dir / f"{stem} ({n}){suf}"
+            n += 1
+        free = shutil.disk_usage(dest_dir).free
+        if free < size + 512 * 1024 * 1024:
+            raise HTTPException(507, f"zu wenig Platz im Zielordner "
+                                     f"({free / 1e9:.1f} GB frei, Video {size / 1e9:.1f} GB)")
+        tmp = dest_dir / f".{dest.name}.part"
+        t0 = time.time()
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dest)
+        tmp = None
+        logger.info("V-Modus: kopiert id=%d -> %s (%.1f MB, %.1fs)", fid,
+                    _safe(str(dest)), size / 1e6, time.time() - t0)
+        return {"ok": True, "name": _safe(dest.name), "dest": _safe(str(dest))}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("V-Modus: Kopieren id=%d fehlgeschlagen: %s", fid, e)
+        raise HTTPException(500, f"Kopieren fehlgeschlagen: {e}")
+    finally:
+        if tmp is not None:
+            try: tmp.unlink(missing_ok=True)
+            except Exception: pass
+        with _VS_LOCK:
+            _VS_COPYING.discard(fid)
 
 
 def _has_manual_tag(root: Path, fid: int, tag: str) -> bool:

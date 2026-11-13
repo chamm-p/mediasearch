@@ -14,7 +14,8 @@ Vision-Endpoint deiner Wahl (vLLM, LM Studio, Ollama, etc.).
   Tag-Buttons, Tastatur-Bedienung)
 - **Video-Abspielmodus** (Taste V / Klick auf Video) - alle Videos der
   Auswahl/Suche nacheinander in `mpv`: c = weiter, f = Favorit an/aus,
-  z = zurueck, F = Favorit entfernen, q/Esc = Ende
+  z = zurueck, F = Favorit entfernen, k = zum Nachbearbeiten kopieren,
+  q/Esc = Ende
 - **Anzeige-Tracking** - jedes gezeigte Bild/Video wird sofort vermerkt;
   Filter "Nur ungezeigte" / "Nur gezeigte" in der Trefferliste
 - **Nutzungsdauer-Ranking** - bei Videos wird die Abspielzeit
@@ -106,6 +107,7 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 | f | Favorit an/aus (manueller Tag `favorit`), bleibt beim Video |
 | z | vorheriges Video |
 | F (Shift+f) | Favorit entfernen (bleibt beim Video) |
+| k | Video in den Ordner `copy_dir` kopieren (Original bleibt; `config.toml` → `[player]`) |
 | q / Esc | Abspielmodus beenden |
 
 Favoriten tragen dauerhaft einen grossen goldenen „★ Favorit“ oben rechts,

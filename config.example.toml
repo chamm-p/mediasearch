@@ -69,6 +69,12 @@ video = ""                  # z.B. "mpv --fs"
 # key_fav      = "f"         # Favorit an/aus (bleibt beim Video)
 # key_prev     = "z"         # vorheriges Video
 # key_unfav    = "F"         # Favorit entfernen (Shift+f), bleibt beim Video
+# key_copy     = "k"         # Video in copy_dir KOPIEREN (Original bleibt)
+# copy_dir     = "/home/USER/Videos/nachbearbeiten"
+#   Zielordner fuer k. Muss existieren (wird bewusst nicht angelegt, damit
+#   bei Tippfehler/nicht gemountetem Laufwerk nichts auf die Systemplatte
+#   geht). Am besten AUSSERHALB des Medien-Roots - sonst taucht die Kopie
+#   beim naechsten Scan als zusaetzliches Video auf.
 # favorite_tag = "favorit"   # manueller Tag fuer key_fav
 # Hinweis: f und z sind in mpv vorbelegt (f = Vollbild, z = Untertitel-
 # Verzoegerung) und werden NUR im Abspielmodus ueberschrieben - Vollbild
