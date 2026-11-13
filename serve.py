@@ -1909,12 +1909,13 @@ _KEY_RE = re.compile(r"^[A-Za-z0-9_+\-]{1,24}$")   # mpv-Tastenname, ohne Komma/
 
 def _player_cfg() -> dict:
     """[player] aus config.toml: Tasten des Video-Abspielmodus + Favoriten-Tag.
-    Defaults c/f/z. ACHTUNG: f und z sind in mpv vorbelegt (f=Vollbild,
+    Defaults c/f/z, F (Shift+f) = Favorit entfernen. ACHTUNG: f und z sind in mpv vorbelegt (f=Vollbild,
     z=Untertitel-Verzoegerung) und werden NUR im Abspielmodus ueberschrieben;
     Vollbild geht dort weiter per Doppelklick."""
     cfg = (load_config().get("player", {}) or {})
     out = {}
-    for k, dflt in (("key_next", "c"), ("key_fav", "f"), ("key_prev", "z")):
+    for k, dflt in (("key_next", "c"), ("key_fav", "f"), ("key_prev", "z"),
+                    ("key_unfav", "F")):
         v = str(cfg.get(k, dflt)).strip()
         if not _KEY_RE.match(v):
             logger.warning("config [player] %s=%r ungueltig -> %s", k, v, dflt)
@@ -2021,6 +2022,7 @@ def api_vslideshow(payload: dict) -> dict:
            "--script-opts-append=vs_next=" + pc["key_next"],
            "--script-opts-append=vs_fav=" + pc["key_fav"],
            "--script-opts-append=vs_prev=" + pc["key_prev"],
+           "--script-opts-append=vs_unfav=" + pc["key_unfav"],
            "--script-opts-append=vs_favtag=" + pc["favorite_tag"],
            "--loop-file=inf",
            f"--playlist-start={start_pos}",
@@ -2037,22 +2039,29 @@ def api_vslideshow(payload: dict) -> dict:
         raise HTTPException(500, "mpv nicht installiert")
     # SOFORT als gesehen markieren - nicht erst beim Schliessen
     mark_viewed(root, [first])
-    logger.info("V-Modus: %d Videos, Start pos=%d id=%d, Tasten next=%s fav=%s prev=%s",
-                len(good), start_pos, first, pc["key_next"], pc["key_fav"],
-                pc["key_prev"])
+    logger.info("V-Modus: %d Videos, Start pos=%d id=%d, Tasten next=%s fav=%s "
+                "prev=%s unfav=%s", len(good), start_pos, first, pc["key_next"],
+                pc["key_fav"], pc["key_prev"], pc["key_unfav"])
     return {"ok": True, "count": len(good), "start_pos": start_pos,
             "start_id": first, "keys": pc}
 
 
 @app.post("/api/vs/event")
 def api_vs_event(payload: dict) -> dict:
-    """Meldungen des Lua-Scripts. payload: {sid, ev: start|fav, pos}"""
+    """Meldungen des Lua-Scripts. payload: {sid, ev, pos, tag?}
+    ev: start (Video geladen) | fav (Favorit setzen) | unfav (entfernen).
+    Antwort enthaelt immer 'fav' (ist das Video jetzt Favorit?) - damit
+    zeigt mpv beim Laden '★ Favorit' an."""
     sid = str(payload.get("sid") or "")
     ev = str(payload.get("ev") or "")
     try:
         pos = int(payload.get("pos"))
     except (TypeError, ValueError):
         raise HTTPException(400, "pos fehlt")
+    if ev not in ("start", "fav", "unfav"):
+        raise HTTPException(400, f"unbekanntes Event {ev!r}")
+    tag = str(payload.get("tag") or _player_cfg()["favorite_tag"])
+    noop = False
     with _VS_LOCK:
         sess = _VS_SESSIONS.get(sid)
         if sess is None:
@@ -2060,25 +2069,38 @@ def api_vs_event(payload: dict) -> dict:
         if not 0 <= pos < len(sess["ids"]):
             raise HTTPException(400, "pos ausserhalb der Playlist")
         fid = sess["ids"][pos]
+        root = sess["root"]
         if ev == "start":
             if fid == sess["cur"]:
-                return {"ok": True, "id": fid, "noop": True}
-            now = time.time()
-            _vs_book(sess, now)          # vorheriges Video buchen
-            sess["cur"] = fid
-            root = sess["root"]
-        elif ev == "fav":
-            root = sess["root"]
-        else:
-            raise HTTPException(400, f"unbekanntes Event {ev!r}")
+                noop = True              # Startvideo: schon beim Start vermerkt
+            else:
+                _vs_book(sess, time.time())   # vorheriges Video buchen
+                sess["cur"] = fid
     if ev == "start":
-        mark_viewed(root, [fid])
-        return {"ok": True, "id": fid}
-    tag = str(payload.get("tag") or _player_cfg()["favorite_tag"])
-    canon, changed = _apply_manual_tag(root, [fid], tag, "add")
+        if not noop:
+            mark_viewed(root, [fid])
+        res = {"ok": True, "id": fid, "fav": _has_manual_tag(root, fid, tag)}
+        if noop:
+            res["noop"] = True
+        return res
+    canon, changed = _apply_manual_tag(root, [fid], tag,
+                                       "add" if ev == "fav" else "remove")
     _bump_view_stamp()
-    logger.info("V-Modus: Favorit id=%d tag=%s changed=%d", fid, canon, changed)
-    return {"ok": True, "id": fid, "tag": canon, "changed": changed}
+    logger.info("V-Modus: %s id=%d tag=%s changed=%d",
+                "Favorit" if ev == "fav" else "Favorit entfernt", fid, canon, changed)
+    return {"ok": True, "id": fid, "tag": canon, "changed": changed,
+            "fav": ev == "fav"}
+
+
+def _has_manual_tag(root: Path, fid: int, tag: str) -> bool:
+    tag = tag.strip().lower()
+    canon = load_synonyms().get(tag, tag)
+    conn = connect(root)
+    try:
+        r = conn.execute("SELECT manual_tags FROM files WHERE id=?", (fid,)).fetchone()
+    finally:
+        conn.close()
+    return bool(r) and canon in [t.strip() for t in (r["manual_tags"] or "").split(",")]
 
 
 @app.post("/api/watch/reset")

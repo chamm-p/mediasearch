@@ -68,6 +68,7 @@ video = ""                  # z.B. "mpv --fs"
 # key_next     = "c"         # naechstes Video
 # key_fav      = "f"         # als Favorit markieren + naechstes Video
 # key_prev     = "z"         # vorheriges Video
+# key_unfav    = "F"         # Favorit entfernen (Shift+f), bleibt beim Video
 # favorite_tag = "favorit"   # manueller Tag fuer key_fav
 # Hinweis: f und z sind in mpv vorbelegt (f = Vollbild, z = Untertitel-
 # Verzoegerung) und werden NUR im Abspielmodus ueberschrieben - Vollbild

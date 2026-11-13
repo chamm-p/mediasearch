@@ -132,6 +132,8 @@ mp.register_event("file-loaded", apply_default_once)
 --   vs_next (Default c) : naechstes Video
 --   vs_fav  (Default f) : als Favorit markieren + naechstes Video
 --   vs_prev (Default z) : vorheriges Video
+--   vs_unfav (Default F = Shift+f) : Favorit entfernen (bleibt beim Video)
+--   Ist ein Video schon Favorit, zeigt mpv beim Laden "★ Favorit".
 --   q / ESC             : Abspielmodus beenden
 -- Jeder Videowechsel wird an den Server gemeldet: dort wird das Video SOFORT
 -- als gesehen vermerkt und die Nutzungsdauer des vorigen gebucht.
@@ -143,6 +145,8 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
     local key_nx  = mp.get_opt("vs_next") or "c"
     local key_fav = mp.get_opt("vs_fav") or "f"
     local key_pv  = mp.get_opt("vs_prev") or "z"
+    local key_unf = mp.get_opt("vs_unfav") or "F"
+    local utils   = require("mp.utils")
     local favtag  = mp.get_opt("vs_favtag") or "favorit"
 
     -- HTTP-POST ueber Python (ist auf dem Zielsystem sicher vorhanden, curl
@@ -165,11 +169,13 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
         }, function(success, res, err)
             local ok = success and res and res.status == 0
             if ok then
-                if on_ok then on_ok() end
+                if on_ok then
+                    on_ok(utils.parse_json(res.stdout or "") or {})
+                end
             else
                 mp.msg.warn("vs post " .. ev .. " fehlgeschlagen: "
                             .. tostring(err or (res and res.stderr) or "?"))
-                if ev == "fav" then
+                if ev == "fav" or ev == "unfav" then
                     mp.osd_message("Favorit konnte NICHT gespeichert werden", 3)
                 end
             end
@@ -181,9 +187,10 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
                mp.get_property_number("playlist-count", 0) or 0
     end
 
-    local function info(prefix)
+    local function info(prefix, fav)
         local pos, cnt = pos_count()
-        mp.osd_message(string.format("%sVideo %d / %d", prefix or "", pos + 1, cnt), 2)
+        mp.osd_message(string.format("%sVideo %d / %d%s", prefix or "", pos + 1, cnt,
+                                     fav and "   ★ Favorit" or ""), fav and 3 or 2)
     end
 
     local function go_next(prefix)
@@ -207,6 +214,17 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
         mp.commandv("playlist-prev", "force")
     end)
 
+    mp.add_forced_key_binding(key_unf, "vs-unfav", function()
+        local pos = pos_count()
+        post("unfav", pos, function(r)
+            if r.changed and r.changed > 0 then
+                mp.osd_message("Favorit entfernt", 2)
+            else
+                mp.osd_message("war kein Favorit", 2)
+            end
+        end)
+    end)
+
     mp.add_forced_key_binding(key_fav, "vs-fav", function()
         local pos = pos_count()
         post("fav", pos)                 -- Position des AKTUELLEN Videos
@@ -218,12 +236,15 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
     -- (Startvideo hat er beim Start selbst vermerkt).
     mp.register_event("file-loaded", function()
         local pos = pos_count()
-        post("start", pos)
+        post("start", pos, function(r)
+            -- Antwort kommt nach ~0.1s; nur anzeigen, wenn noch dasselbe Video
+            if r.fav and pos_count() == pos then info(nil, true) end
+        end)
         -- manuelle Drehung (b/n) gilt nur fuers jeweilige Video
         mp.set_property_number("video-rotate", 0)
         info(nil)
     end)
 
-    mp.msg.info(string.format("Video-Abspielmodus: %s=weiter %s=Favorit %s=zurueck",
-                              key_nx, key_fav, key_pv))
+    mp.msg.info(string.format("Video-Abspielmodus: %s=weiter %s=Favorit %s=zurueck "
+                              .. "%s=Favorit entfernen", key_nx, key_fav, key_pv, key_unf))
 end

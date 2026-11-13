@@ -14,7 +14,7 @@ Vision-Endpoint deiner Wahl (vLLM, LM Studio, Ollama, etc.).
   Tag-Buttons, Tastatur-Bedienung)
 - **Video-Abspielmodus** (Taste V / Klick auf Video) - alle Videos der
   Auswahl/Suche nacheinander in `mpv`: c = weiter, f = Favorit + weiter,
-  z = zurueck, q/Esc = Ende
+  z = zurueck, F = Favorit entfernen, q/Esc = Ende
 - **Anzeige-Tracking** - jedes gezeigte Bild/Video wird sofort vermerkt;
   Filter "Nur ungezeigte" / "Nur gezeigte" in der Trefferliste
 - **Nutzungsdauer-Ranking** - bei Videos wird die Abspielzeit
@@ -105,8 +105,10 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 | c | naechstes Video |
 | f | als Favorit markieren (manueller Tag `favorit`) + naechstes Video |
 | z | vorheriges Video |
+| F (Shift+f) | Favorit entfernen (bleibt beim Video) |
 | q / Esc | Abspielmodus beenden |
 
+Ist ein Video schon Favorit, zeigt mpv beim Laden „★ Favorit“.
 Jedes Video gilt beim Start sofort als gesehen; die Nutzungsdauer wird pro
 Video gebucht. `f` (sonst Vollbild) und `z` (sonst Untertitel-Verzoegerung)
 sind in mpv vorbelegt und werden nur in diesem Modus ueberschrieben -
