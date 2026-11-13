@@ -108,7 +108,8 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 | F (Shift+f) | Favorit entfernen (bleibt beim Video) |
 | q / Esc | Abspielmodus beenden |
 
-Ist ein Video schon Favorit, zeigt mpv beim Laden „★ Favorit“.
+Favoriten tragen dauerhaft einen grossen goldenen „★ Favorit“ oben rechts,
+solange das Video laeuft (an/aus mit f).
 Jedes Video gilt beim Start sofort als gesehen; die Nutzungsdauer wird pro
 Video gebucht. `f` (sonst Vollbild) und `z` (sonst Untertitel-Verzoegerung)
 sind in mpv vorbelegt und werden nur in diesem Modus ueberschrieben -

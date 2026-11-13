@@ -133,7 +133,7 @@ mp.register_event("file-loaded", apply_default_once)
 --   vs_fav  (Default f) : Favorit an/aus (bleibt beim Video)
 --   vs_prev (Default z) : vorheriges Video
 --   vs_unfav (Default F = Shift+f) : Favorit entfernen (bleibt beim Video)
---   Ist ein Video schon Favorit, zeigt mpv beim Laden "★ Favorit".
+--   Favoriten tragen DAUERHAFT einen grossen goldenen Stern oben rechts.
 --   q / ESC             : Abspielmodus beenden
 -- Jeder Videowechsel wird an den Server gemeldet: dort wird das Video SOFORT
 -- als gesehen vermerkt und die Nutzungsdauer des vorigen gebucht.
@@ -175,7 +175,7 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
             else
                 mp.msg.warn("vs post " .. ev .. " fehlgeschlagen: "
                             .. tostring(err or (res and res.stderr) or "?"))
-                if ev == "fav" or ev == "unfav" then
+                if ev == "fav" or ev == "unfav" or ev == "toggle" then
                     mp.osd_message("Favorit konnte NICHT gespeichert werden", 3)
                 end
             end
@@ -187,10 +187,25 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
                mp.get_property_number("playlist-count", 0) or 0
     end
 
-    local function info(prefix, fav)
+    local function info()
         local pos, cnt = pos_count()
-        mp.osd_message(string.format("%sVideo %d / %d%s", prefix or "", pos + 1, cnt,
-                                     fav and "   ★ Favorit" or ""), fav and 3 or 2)
+        mp.osd_message(string.format("Video %d / %d", pos + 1, cnt), 2)
+    end
+
+    -- Dauerhafter Favoriten-Stern: eigenes OSD-Overlay (bleibt stehen, solange
+    -- das Video Favorit ist - anders als osd_message, das nach Sekunden
+    -- verschwindet). Gold mit schwarzem Rand, oben rechts, auf hellem wie
+    -- dunklem Bild gut sichtbar. ASS-Farben sind BGR: &H00D7FF& = Gold.
+    local star = mp.create_osd_overlay and mp.create_osd_overlay("ass-events")
+    local function set_star(on)
+        if not star then return end      -- sehr altes mpv ohne Overlays
+        if on then
+            star.data = "{\\an9\\fs64\\b1\\bord4\\shad2"
+                     .. "\\1c&H00D7FF&\\3c&H000000&}★ Favorit"
+            star:update()
+        else
+            star:remove()
+        end
     end
 
     local function go_next()
@@ -216,6 +231,7 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
     mp.add_forced_key_binding(key_unf, "vs-unfav", function()
         local pos = pos_count()
         post("unfav", pos, function(r)
+            if pos_count() == pos then set_star(false) end
             if r.changed and r.changed > 0 then
                 mp.osd_message("Favorit entfernt", 2)
             else
@@ -228,6 +244,7 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
         local pos = pos_count()
         -- Server entscheidet anhand der DB (kein veralteter Lua-Zustand)
         post("toggle", pos, function(r)
+            if pos_count() == pos then set_star(r.fav) end
             if r.fav then
                 mp.osd_message("★ Favorit", 2)
             else
@@ -243,11 +260,12 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
         local pos = pos_count()
         post("start", pos, function(r)
             -- Antwort kommt nach ~0.1s; nur anzeigen, wenn noch dasselbe Video
-            if r.fav and pos_count() == pos then info(nil, true) end
+            if pos_count() == pos then set_star(r.fav) end
         end)
         -- manuelle Drehung (b/n) gilt nur fuers jeweilige Video
         mp.set_property_number("video-rotate", 0)
-        info(nil)
+        set_star(false)                  -- neues Video: erst ohne Stern
+        info()
     end)
 
     mp.msg.info(string.format("Video-Abspielmodus: %s=weiter %s=Favorit %s=zurueck "
