@@ -1983,18 +1983,38 @@ def api_vslideshow(payload: dict) -> dict:
     if not ids:
         raise HTTPException(404, "keine Videos in der aktuellen Auswahl/Suche")
 
+    # Pfade in EINER Abfrage holen (frueher: pro Video eigene DB-Verbindung +
+    # resolve() + exists() -> bei Zehntausenden Videos viele Sekunden bis
+    # Minuten). Existenz wird nicht vorab geprueft - mpv ueberspringt
+    # fehlende Dateien selbst; nur das Startvideo wird geprueft.
+    rel_by_id: dict[int, str] = {}
+    conn = connect(root)
+    try:
+        for i in range(0, len(ids), 900):     # SQLite-Variablenlimit
+            chunk = ids[i:i + 900]
+            ph = ",".join("?" * len(chunk))
+            for r in conn.execute(
+                    f"SELECT id, rel_path FROM files WHERE id IN ({ph})", chunk):
+                rel_by_id[r["id"]] = r["rel_path"]
+    finally:
+        conn.close()
+    root_b = os.fsencode(str(root))
     paths: list[bytes] = []
     good: list[int] = []
     for fid in ids:
-        try:
-            p, _ = _abs_for(fid)
-        except HTTPException:
+        rel = rel_by_id.get(fid)
+        if not rel:
             continue
-        b = os.fsencode(str(p))
+        rel_d = decode_surrogates(rel)
+        if rel_d.startswith("/") or ".." in Path(rel_d).parts:
+            continue                      # nie ausserhalb des Roots
+        b = root_b + b"/" + os.fsencode(rel_d)
         if b"\n" in b or b"\r" in b:     # in m3u nicht darstellbar
             continue
         paths.append(b)
         good.append(fid)
+    if start_id in good and not os.path.exists(paths[good.index(start_id)]):
+        raise HTTPException(404, "Startvideo nicht gefunden (Datei fehlt)")
     if not good:
         raise HTTPException(404, "keine der Video-Dateien gefunden")
     start_pos = good.index(start_id) if start_id in good else 0
