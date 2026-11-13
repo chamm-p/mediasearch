@@ -315,6 +315,10 @@ Commands:
                   Auto-Backup laeuft nach jedem Tagging-Lauf, der die DB
                   veraendert hat (Rotation: letzte 10). Eine korrupte DB wird
                   NIE gesichert (Integritaets-Check vorher).
+  reset-watch [root]         Nutzungsdauer (Anzeigedauer) ALLER Videos auf 0
+                    (Trockenlauf; --apply fuehrt aus, Backup vorher;
+                     --seen setzt zusaetzlich 'gesehen' zurueck)
+                    Auch im Web-UI: Setup -> 'Nutzungsdauer zuruecksetzen'
 
   setup-browser   Laedt einen portablen Browser nach browser/
                     (kein Argument)  -> Firefox-Tarball (~80 MB, GTK)
@@ -377,6 +381,7 @@ case "${1:-ui}" in
     db-backup)      shift; exec "$PY" dbtools.py backup  "$@" ;;
     db-repair)      shift; exec "$PY" dbtools.py repair  "$@" ;;
     db-restore)     shift; exec "$PY" dbtools.py restore "$@" ;;
+    reset-watch)    shift; exec "$PY" dbtools.py reset-watch "$@" ;;
     setup-browser)  shift; exec bash "$HERE/setup_browser.sh" "$@" ;;
     help|-h|--help) show_help ;;
     *)  echo "Unbekanntes Command: ${1}"

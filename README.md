@@ -12,8 +12,10 @@ Vision-Endpoint deiner Wahl (vLLM, LM Studio, Ollama, etc.).
 - **Manuelle Tags** zusaetzlich zu Auto-Tags - bleiben beim Re-Tagging erhalten
 - **Slideshow** im Browser (Random/Serial Toggle, Rotation, Vollbild,
   Tag-Buttons, Tastatur-Bedienung)
-- **Random-Play** ueber `mpv` fuer gemischte Bilder/Videos
-- **Anzeige-Tracking** - jedes gezeigte Bild/Video wird vermerkt;
+- **Video-Abspielmodus** (Taste V / Klick auf Video) - alle Videos der
+  Auswahl/Suche nacheinander in `mpv`: c = weiter, f = Favorit + weiter,
+  z = zurueck, q/Esc = Ende
+- **Anzeige-Tracking** - jedes gezeigte Bild/Video wird sofort vermerkt;
   Filter "Nur ungezeigte" / "Nur gezeigte" in der Trefferliste
 - **Nutzungsdauer-Ranking** - bei Videos wird die Abspielzeit
   (mpv-Start bis Esc) aufsummiert; Sortierung "Nutzungsdauer (laengste
@@ -78,7 +80,9 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 - Suche: Volltext ueber Tags + Beschreibung. Operatoren: `AND`, `OR`, `NOT`,
   `"phrase"`. Wildcards (Prefix `katz*`) funktionieren automatisch.
 - Sortierung: Pfad/Name (Default), Neueste, Aelteste, Relevanz, Random
-- Klick auf Bild → Slideshow ab dort. Klick auf Video → externer Player.
+- Klick auf Bild → Slideshow ab dort. Klick auf Video → Video-Abspielmodus
+  ab diesem Video (Liste = Auswahl, falls Videos ausgewaehlt, sonst die Suche).
+- V → Video-Abspielmodus ab dem ersten Video der aktuellen Seite.
 - Strg+Klick / Rechtsklick → Selektion. Selektion bleibt ueber Seiten.
 
 ### Slideshow-Hotkeys
@@ -94,6 +98,19 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 | O | extern oeffnen |
 | P | Auto-Advance Pause/Play |
 | Esc | schliessen |
+
+### Video-Abspielmodus (V)
+| Taste | Aktion |
+|---|---|
+| c | naechstes Video |
+| f | als Favorit markieren (manueller Tag `favorit`) + naechstes Video |
+| z | vorheriges Video |
+| q / Esc | Abspielmodus beenden |
+
+Jedes Video gilt beim Start sofort als gesehen; die Nutzungsdauer wird pro
+Video gebucht. `f` (sonst Vollbild) und `z` (sonst Untertitel-Verzoegerung)
+sind in mpv vorbelegt und werden nur in diesem Modus ueberschrieben -
+Vollbild geht per Doppelklick. Andere Tasten: `config.toml` → `[player]`.
 
 ### mpv-Hotkeys (Video-Player, via `mpv/rotate.lua`)
 | Taste | Aktion |
@@ -125,6 +142,8 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 ./run.sh fix-videos            # kaputte Videos per ffmpeg reparieren
 ./run.sh diag                  # Scan-/DB-Diagnose
 ./run.sh db-check              # DB-Integritaet + Backups
+./run.sh reset-watch           # Nutzungsdauer aller Videos auf 0 (Trockenlauf)
+./run.sh reset-watch --apply   # wirklich (Backup vorher); --seen = auch 'gesehen'
 ```
 
 ## Konfiguration
@@ -173,7 +192,7 @@ ohne Kollision.
 
 ## Sicherheit
 
-Der Server hat **keine Authentifizierung**. `/api/open` und `/api/play`
+Der Server hat **keine Authentifizierung**. `/api/open`, `/api/play` und `/api/vslideshow`
 starten Prozesse auf der Host-Maschine, `/file/{id}` liefert beliebige
 Dateien aus dem Wurzelverzeichnis aus. Nur in vertrauenswuerdigen
 Netzwerken auf `0.0.0.0` binden.

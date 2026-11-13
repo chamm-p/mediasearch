@@ -474,6 +474,36 @@ def backup_db(root: Path, keep: int = 7, daily_dedup: bool = True) -> Path | Non
     return dst
 
 
+def reset_watch_stats(root: Path, also_seen: bool = False,
+                      dry_run: bool = False) -> dict:
+    """Setzt die Nutzungsdauer (watch_seconds) ALLER Videos auf 0.
+    also_seen=True setzt zusaetzlich den 'gesehen'-Status zurueck
+    (viewed_at/view_count). Bilder bleiben unangetastet.
+    Gemeinsam genutzt von './run.sh reset-watch' und der Setup-Schaltflaeche."""
+    conn = connect(root)
+    try:
+        n_watch = conn.execute(
+            "SELECT COUNT(*) FROM files WHERE type='video' AND watch_seconds>0"
+        ).fetchone()[0]
+        secs = conn.execute(
+            "SELECT COALESCE(SUM(watch_seconds),0) FROM files WHERE type='video'"
+        ).fetchone()[0]
+        n_seen = conn.execute(
+            "SELECT COUNT(*) FROM files WHERE type='video' AND viewed_at>0"
+        ).fetchone()[0]
+        if not dry_run:
+            conn.execute("UPDATE files SET watch_seconds=0 "
+                         "WHERE type='video' AND watch_seconds<>0")
+            if also_seen:
+                conn.execute("UPDATE files SET viewed_at=0, view_count=0 "
+                             "WHERE type='video' AND (viewed_at<>0 OR view_count<>0)")
+            conn.commit()
+    finally:
+        conn.close()
+    return {"watch_reset": n_watch, "watch_hours": round(secs / 3600, 1),
+            "seen_reset": n_seen if also_seen else 0}
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

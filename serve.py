@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import random
+import re
+import secrets
 import subprocess
 import sys
 import threading
@@ -422,9 +424,22 @@ tagger = Tagger()
 
 # ---------- view tracking ----------
 
+# Zaehlt bei jeder Aenderung an gesehen/Nutzungsdauer/Favorit hoch. Der
+# Browser pollt /api/viewstamp und laedt die aktuelle Seite neu, sobald sich
+# etwas getan hat - sonst bliebe z.B. das "NEU"-Badge stehen, obwohl mpv das
+# Video laengst als gesehen gemeldet hat (der Browser bekommt davon nichts mit).
+_VIEW_STAMP = 0
+
+
+def _bump_view_stamp() -> None:
+    global _VIEW_STAMP
+    _VIEW_STAMP += 1
+
+
 def _invalidate_view_caches() -> None:
     """Wirft sortierte ID-Listen weg, deren Reihenfolge/Inhalt von
     Anzeige-Daten abhaengt (seen-Filter aktiv oder Nutzungsdauer-Sortierung)."""
+    _bump_view_stamp()
     for key in list(_SORTED_IDS_CACHE.keys()):
         seen, order = key[2], key[4]
         if seen or order == "watched_desc":
@@ -522,6 +537,9 @@ class PlayerManager:
             self.entries = still
         if not finished:
             return
+        for e in finished:
+            if e.get("vs"):              # Video-Abspielmodus: Rest buchen
+                _vs_finish(e["vs"])
         root = current_root()
         for e in finished:
             if not e["track"] or root is None:
@@ -544,8 +562,8 @@ class PlayerManager:
             pass
 
     def launch(self, cmd: list[str], *, file_id: int | None = None,
-               track: bool = False, foreground: bool = False
-               ) -> subprocess.Popen:
+               track: bool = False, foreground: bool = False,
+               vs_sid: str | None = None) -> subprocess.Popen:
         """Startet cmd. foreground=True beendet vorher laufende Vollbild-
         Player (verhindert Stapeln). track=True misst die Laufzeit als
         Nutzungsdauer fuer file_id."""
@@ -573,18 +591,28 @@ class PlayerManager:
                 except Exception: pass
             self.entries.append({"proc": proc, "file_id": file_id,
                                  "started": time.time(), "track": track,
-                                 "fg": foreground})
+                                 "fg": foreground, "vs": vs_sid})
         self._ensure_reaper()
         return proc
 
     def stop_all(self) -> int:
         """Beendet ALLE verwalteten Player. Gibt Anzahl beendeter zurueck."""
         n = 0
+        stopped: list[subprocess.Popen] = []
         with self.lock:
             for e in self.entries:
                 if e["proc"].poll() is None:
                     self._terminate(e["proc"])
+                    stopped.append(e["proc"])
                     n += 1
+        # kurz aufs Ende warten, sonst findet reap() die Prozesse noch
+        # laufend vor und gebucht wird erst vom Reaper-Thread
+        deadline = time.time() + 2.0
+        for proc in stopped:
+            try:
+                proc.wait(timeout=max(0.05, deadline - time.time()))
+            except Exception:
+                pass
         self.reap()   # sofort buchen + aufraeumen, nicht erst in 2s
         return n
 
@@ -845,10 +873,21 @@ def api_tags_apply(payload: dict) -> dict:
         raise HTTPException(400, "tag leer")
     if action not in ("add", "remove"):
         raise HTTPException(400, "action muss 'add' oder 'remove' sein")
-    syn = load_synonyms()
-    canon = syn.get(tag, tag)
+    canon, changed = _apply_manual_tag(require_root(), ids, tag, action)
+    logger.info("tags/apply action=%s tag=%s ids=%d changed=%d",
+                action, canon, len(ids), changed)
+    return {"ok": True, "tag": canon, "action": action,
+            "selected": len(ids), "changed": changed}
 
-    root = require_root()
+
+def _apply_manual_tag(root: Path, ids: list[int], tag: str,
+                      action: str = "add") -> tuple[str, int]:
+    """Haengt einen MANUELLEN Tag an (bzw. entfernt ihn). Gemeinsam genutzt
+    von /api/tags/apply und der Favoriten-Taste im Video-Abspielmodus.
+    Gibt (kanonischer Tag, Anzahl geaenderter Files) zurueck."""
+    syn = load_synonyms()
+    tag = tag.strip().lower()
+    canon = syn.get(tag, tag)
     conn = connect(root)
     changed = 0
     try:
@@ -874,10 +913,7 @@ def api_tags_apply(payload: dict) -> dict:
             changed = len(updates)
     finally:
         conn.close()
-    logger.info("tags/apply action=%s tag=%s ids=%d changed=%d",
-                action, canon, len(ids), changed)
-    return {"ok": True, "tag": canon, "action": action,
-            "selected": len(ids), "changed": changed}
+    return canon, changed
 
 
 @app.post("/api/normalize")
@@ -1854,6 +1890,214 @@ def api_play(payload: dict) -> dict:
     mark_viewed(require_root(), resolved_ids)
     return {"ok": True, "count": len(paths)}
 
+
+# ---------- Video-Abspielmodus (V): Slideshow fuer Videos in EINEM mpv ----------
+#
+# Ablauf: Browser -> POST /api/vslideshow (Suche/Selektion + Startvideo).
+# Server schreibt eine m3u, startet EIN mpv mit Playlist ab dem Startvideo und
+# gibt dem Lua-Script (mpv/rotate.lua) eine Session-ID + Event-URL mit. Das
+# Script meldet jeden Videowechsel (POST /api/vs/event ev=start pos=N) und die
+# Favoriten-Taste (ev=fav). Der Server bucht daraus "gesehen" (sofort beim
+# Start) und die Nutzungsdauer PRO Video; den Rest beim mpv-Ende bucht der
+# Player-Reaper - auch wenn mpv per q/Esc/Kill endet.
+
+_VS_LOCK = threading.Lock()
+_VS_SESSIONS: dict[str, dict] = {}   # sid -> {ids, cur, t, root}
+
+_KEY_RE = re.compile(r"^[A-Za-z0-9_+\-]{1,24}$")   # mpv-Tastenname, ohne Komma/=
+
+
+def _player_cfg() -> dict:
+    """[player] aus config.toml: Tasten des Video-Abspielmodus + Favoriten-Tag.
+    Defaults c/f/z. ACHTUNG: f und z sind in mpv vorbelegt (f=Vollbild,
+    z=Untertitel-Verzoegerung) und werden NUR im Abspielmodus ueberschrieben;
+    Vollbild geht dort weiter per Doppelklick."""
+    cfg = (load_config().get("player", {}) or {})
+    out = {}
+    for k, dflt in (("key_next", "c"), ("key_fav", "f"), ("key_prev", "z")):
+        v = str(cfg.get(k, dflt)).strip()
+        if not _KEY_RE.match(v):
+            logger.warning("config [player] %s=%r ungueltig -> %s", k, v, dflt)
+            v = dflt
+        out[k] = v
+    out["favorite_tag"] = (str(cfg.get("favorite_tag", "favorit")).strip().lower()
+                           or "favorit")
+    return out
+
+
+def _vs_book(sess: dict, now: float) -> None:
+    """Bucht die Laufzeit des aktuellen Videos einer Session (ab sess['t'])."""
+    elapsed = now - sess["t"]
+    if sess["cur"] is not None and elapsed >= 1.0:
+        try:
+            add_watch_time(sess["root"], sess["cur"], elapsed)
+            logger.info("watch-time (V-Modus): id=%d +%.1fs", sess["cur"], elapsed)
+        except Exception as ex:
+            logger.error("watch-time (V-Modus) id=%s: %s", sess["cur"], ex)
+    sess["t"] = now
+
+
+def _vs_finish(sid: str) -> None:
+    """mpv der Session ist beendet -> Rest buchen, Session wegwerfen."""
+    with _VS_LOCK:
+        sess = _VS_SESSIONS.pop(sid, None)
+    if sess:
+        _vs_book(sess, time.time())
+
+
+@app.get("/api/viewstamp")
+def api_viewstamp() -> dict:
+    """Aenderungszaehler fuer gesehen/Dauer/Favorit (Browser pollt das)."""
+    return {"stamp": _VIEW_STAMP}
+
+
+@app.post("/api/vslideshow")
+def api_vslideshow(payload: dict) -> dict:
+    """Startet den Video-Abspielmodus.
+    payload: {ids?: [int] (Selektion, Reihenfolge bleibt),
+              q, order, seen, min_watch (aktuelle Suche, wenn keine ids),
+              start_id?: int (dieses Video zuerst; sonst das erste)}"""
+    root = require_root()
+    start_id = int(payload.get("start_id") or 0)
+    sel = [int(x) for x in (payload.get("ids") or [])]
+    if sel:
+        conn = connect(root)
+        try:
+            ph = ",".join("?" * len(sel))
+            vids = {r["id"] for r in conn.execute(
+                f"SELECT id FROM files WHERE type='video' AND id IN ({ph})", sel)}
+        finally:
+            conn.close()
+        ids = [i for i in sel if i in vids]
+    else:
+        res = api_search_ids(q=str(payload.get("q") or ""), type="video",
+                             order=str(payload.get("order") or "path"),
+                             seen=str(payload.get("seen") or ""),
+                             min_watch=float(payload.get("min_watch") or 0),
+                             max_results=200000)
+        ids = [it["id"] for it in res.get("items", [])]
+    if start_id and start_id not in ids:
+        ids.insert(0, start_id)          # geklicktes Video immer dabei
+    if not ids:
+        raise HTTPException(404, "keine Videos in der aktuellen Auswahl/Suche")
+
+    paths: list[bytes] = []
+    good: list[int] = []
+    for fid in ids:
+        try:
+            p, _ = _abs_for(fid)
+        except HTTPException:
+            continue
+        b = os.fsencode(str(p))
+        if b"\n" in b or b"\r" in b:     # in m3u nicht darstellbar
+            continue
+        paths.append(b)
+        good.append(fid)
+    if not good:
+        raise HTTPException(404, "keine der Video-Dateien gefunden")
+    start_pos = good.index(start_id) if start_id in good else 0
+
+    slot = db_path(root).parent
+    m3u = slot / "vslideshow.m3u"
+    tmp = m3u.with_suffix(".m3u.tmp")
+    tmp.write_bytes(b"#EXTM3U\n" + b"\n".join(paths) + b"\n")
+    tmp.replace(m3u)
+
+    pc = _player_cfg()
+    sid = secrets.token_hex(8)
+    port = int((load_config().get("serve", {}) or {}).get("port", 8765))
+    port = int(os.environ.get("MEDIASEARCH_PORT", port))
+    host = os.environ.get("MEDIASEARCH_HOST", "127.0.0.1")
+    if host in ("", "0.0.0.0", "::", "localhost"):
+        host = "127.0.0.1"
+    if ":" in host:
+        host = f"[{host}]"
+    url = f"http://{host}:{port}/api/vs/event"
+    cmd = ["mpv", "--fs", *_mpv_extra_args(),
+           # an _mpv_extra_args' --script-opts ANHAENGEN (nicht ersetzen)
+           "--script-opts-append=vs_sid=" + sid,
+           "--script-opts-append=vs_url=" + url,
+           "--script-opts-append=vs_py=" + sys.executable,
+           "--script-opts-append=vs_next=" + pc["key_next"],
+           "--script-opts-append=vs_fav=" + pc["key_fav"],
+           "--script-opts-append=vs_prev=" + pc["key_prev"],
+           "--script-opts-append=vs_favtag=" + pc["favorite_tag"],
+           "--loop-file=inf",
+           f"--playlist-start={start_pos}",
+           f"--playlist={m3u}"]
+    first = good[start_pos]
+    with _VS_LOCK:
+        _VS_SESSIONS[sid] = {"ids": good, "cur": first, "t": time.time(),
+                             "root": root}
+    try:
+        players.launch(cmd, foreground=True, vs_sid=sid)
+    except FileNotFoundError:
+        with _VS_LOCK:
+            _VS_SESSIONS.pop(sid, None)
+        raise HTTPException(500, "mpv nicht installiert")
+    # SOFORT als gesehen markieren - nicht erst beim Schliessen
+    mark_viewed(root, [first])
+    logger.info("V-Modus: %d Videos, Start pos=%d id=%d, Tasten next=%s fav=%s prev=%s",
+                len(good), start_pos, first, pc["key_next"], pc["key_fav"],
+                pc["key_prev"])
+    return {"ok": True, "count": len(good), "start_pos": start_pos,
+            "start_id": first, "keys": pc}
+
+
+@app.post("/api/vs/event")
+def api_vs_event(payload: dict) -> dict:
+    """Meldungen des Lua-Scripts. payload: {sid, ev: start|fav, pos}"""
+    sid = str(payload.get("sid") or "")
+    ev = str(payload.get("ev") or "")
+    try:
+        pos = int(payload.get("pos"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "pos fehlt")
+    with _VS_LOCK:
+        sess = _VS_SESSIONS.get(sid)
+        if sess is None:
+            raise HTTPException(404, "unbekannte Session")
+        if not 0 <= pos < len(sess["ids"]):
+            raise HTTPException(400, "pos ausserhalb der Playlist")
+        fid = sess["ids"][pos]
+        if ev == "start":
+            if fid == sess["cur"]:
+                return {"ok": True, "id": fid, "noop": True}
+            now = time.time()
+            _vs_book(sess, now)          # vorheriges Video buchen
+            sess["cur"] = fid
+            root = sess["root"]
+        elif ev == "fav":
+            root = sess["root"]
+        else:
+            raise HTTPException(400, f"unbekanntes Event {ev!r}")
+    if ev == "start":
+        mark_viewed(root, [fid])
+        return {"ok": True, "id": fid}
+    tag = str(payload.get("tag") or _player_cfg()["favorite_tag"])
+    canon, changed = _apply_manual_tag(root, [fid], tag, "add")
+    _bump_view_stamp()
+    logger.info("V-Modus: Favorit id=%d tag=%s changed=%d", fid, canon, changed)
+    return {"ok": True, "id": fid, "tag": canon, "changed": changed}
+
+
+@app.post("/api/watch/reset")
+def api_watch_reset(payload: dict | None = None) -> dict:
+    """Setzt die Nutzungsdauer ALLER Videos auf 0 (vorher DB-Backup).
+    payload: {also_seen: bool} - zusaetzlich 'gesehen' zuruecksetzen."""
+    from common import backup_db, reset_watch_stats
+    also_seen = bool((payload or {}).get("also_seen"))
+    root = require_root()
+    bk = backup_db(root, daily_dedup=False)
+    if bk is None:
+        raise HTTPException(500, "Backup fehlgeschlagen (DB fehlt oder defekt) "
+                                 "- nichts zurueckgesetzt. './run.sh db-check'")
+    res = reset_watch_stats(root, also_seen=also_seen)
+    _invalidate_view_caches()
+    _STATS_CACHE["t"] = 0.0
+    logger.info("watch/reset: %s (Backup %s)", res, bk)
+    return {"ok": True, **res, "backup": str(bk)}
+
 # ---------- main ----------
 
 def main() -> None:
@@ -1872,6 +2116,10 @@ def main() -> None:
     # DB-Warmup laeuft jetzt im FastAPI-startup-Event (_startup_warmup),
     # damit er unter jedem Launcher (python serve.py ODER uvicorn serve:app)
     # ausgefuehrt wird. Hier nur noch den Server hochfahren.
+    # Fuer den Video-Abspielmodus: das mpv-Lua-Script meldet Videowechsel per
+    # HTTP an genau diesen Server zurueck (auch wenn --port/--host per CLI).
+    os.environ["MEDIASEARCH_PORT"] = str(port)
+    os.environ["MEDIASEARCH_HOST"] = host
     print(f"open http://{host}:{port}")
     import uvicorn
     uvicorn.run(app, host=host, port=port)

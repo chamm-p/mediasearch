@@ -468,7 +468,7 @@
     <button id="slideshow-btn" class="primary" disabled
             title="Slideshow starten (S) - nur Bilder, sequentiell ab erstem Treffer">Slideshow [S]</button>
     <button id="play-btn" class="primary" disabled
-            title="Random Video (V) - ein zufaelliges Video aus den Treffern, mpv loopt bis Esc. Ein neuer Start ersetzt den laufenden Player.">Random Video [V]</button>
+            title="Video-Abspielmodus (V): alle Videos der Auswahl/Suche nacheinander in mpv. In mpv: c = naechstes, f = Favorit + naechstes, z = vorheriges, q/Esc = beenden (Tasten aenderbar in config.toml [player]).">Videos [V]</button>
     <button id="stop-players-btn" class="danger"
             title="Alle laufenden Player/Viewer (mpv) beenden (X)">Player stop [X]</button>
     <button id="lora-btn" disabled>LoRA</button>
@@ -570,6 +570,9 @@
       DB optimieren</button>
     <button id="s-dupes" title="Doubletten suchen (exakte Dateien + visuell aehnliche Bilder)">
       Doubletten</button>
+    <button id="s-reset-watch" class="danger"
+        title="Setzt die Nutzungsdauer (Anzeigedauer) ALLER Videos auf 0. Vorher wird automatisch ein DB-Backup angelegt. CLI: ./run.sh reset-watch">
+      Nutzungsdauer zuruecksetzen</button>
     <span id="s-msg" style="font-size:12px;align-self:center"></span>
   </div>
 </div>
@@ -1095,8 +1098,8 @@ function render() {
       if (it.type === "image") {
         startSlideshowAt(it);
       } else {
-        fetch("/api/open", {method:"POST", headers:{"Content-Type":"application/json"},
-                            body: JSON.stringify({id: it.id})});
+        // Video -> Abspielmodus ab diesem Video (c/f/z in mpv)
+        startVideoShow(it);
       }
     });
     card.addEventListener("contextmenu", (e) => { e.preventDefault(); toggleSel(it, card); });
@@ -1146,7 +1149,7 @@ function selectRangeTo(item) {
 function updateActionState() {
   const items = selected.size ? [...selected.values()] : results;
   $("#slideshow-btn").disabled = !items.some(r => r.type === "image");
-  // Random-Video: aktiv wenn (Auswahl mit Videos) ODER (keine Auswahl, Type-Filter laesst Videos zu)
+  // Video-Abspielmodus: aktiv wenn (Auswahl mit Videos) ODER (keine Auswahl, Type-Filter laesst Videos zu)
   if (selected.size) {
     $("#play-btn").disabled = ![...selected.values()].some(r => r.type === "video");
   } else {
@@ -1840,6 +1843,27 @@ $("#s-optimize").addEventListener("click", async () => {
     showMsg("Fehler: " + e, "#f88");
   }
 });
+$("#s-reset-watch").addEventListener("click", async () => {
+  if (!confirm("Nutzungsdauer ALLER Videos auf 0 setzen?\n"
+               + "(Vorher wird automatisch ein DB-Backup angelegt.)")) return;
+  const alsoSeen = confirm("Zusaetzlich 'gesehen' zuruecksetzen?\n"
+               + "OK = alle Videos wieder als NEU / ungesehen\n"
+               + "Abbrechen = nur die Nutzungsdauer");
+  showMsg("setze Nutzungsdauer zurueck...", "#888");
+  try {
+    const r = await fetch("/api/watch/reset", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({also_seen: alsoSeen})});
+    const j = await r.json();
+    if (!r.ok) { showMsg("Fehler: " + (j.detail || r.status), "#f88"); return; }
+    showMsg(`Nutzungsdauer bei ${j.watch_reset} Videos (${j.watch_hours} h) auf 0`
+            + (alsoSeen ? `, ${j.seen_reset} wieder ungesehen` : "")
+            + `. Backup: ${j.backup}`, "#8d8");
+    await refreshCurrentPage();
+  } catch (e) {
+    showMsg("Fehler: " + e, "#f88");
+  }
+});
 $("#s-normalize").addEventListener("click", async () => {
   showMsg("normalisiere...", "#888");
   try {
@@ -2077,19 +2101,6 @@ async function fetchAllImageHits() {
   const params = new URLSearchParams({
     q: $("#q").value,
     type: "image",
-    seen: $("#seen").value, min_watch: seenMinSecs(),
-    order: "path",
-  });
-  const r = await fetch("/api/search/ids?" + params).then(r=>r.json());
-  return r.items || [];
-}
-
-async function fetchAllVideoHits() {
-  // Random-Video: alle matchenden Videos aus aktueller Suche.
-  // mpv shufflet selbst, daher Server-Order egal - nehmen wir Pfad fuer Stabilitaet.
-  const params = new URLSearchParams({
-    q: $("#q").value,
-    type: "video",
     seen: $("#seen").value, min_watch: seenMinSecs(),
     order: "path",
   });
@@ -2652,23 +2663,82 @@ function toggleFullscreen() {
   }
 }
 
-$("#play-btn").addEventListener("click", async () => {
-  // NUR Videos. Wir picken EINES zufaellig aus dem Pool und mpv loopt es
-  // bis der User Esc drueckt. Erneuter Klick = neues Random-Video.
-  let videos;
-  if (selected.size) {
-    videos = [...selected.values()].filter(r => r.type === "video");
-  } else {
-    videos = await fetchAllVideoHits();
+// ---- Video-Abspielmodus (V / Klick auf Video) ----
+// EIN mpv mit Playlist; Tasten in mpv (Default, aenderbar in config.toml
+// [player]): c = weiter, f = Favorit + weiter, z = zurueck, q/Esc = Ende.
+// Liste = Auswahl (falls Videos ausgewaehlt) sonst die aktuelle Suche.
+async function startVideoShow(startItem) {
+  let ids = null;
+  const selVids = [...selected.values()].filter(r => r.type === "video");
+  if (selVids.length && (!startItem || selected.has(startItem.id))) {
+    ids = selVids.map(r => r.id);
   }
-  if (!videos.length) {
-    alert("keine Videos in der Auswahl/Suche gefunden");
-    return;
+  if (!startItem && !ids) {
+    // ohne Klick: beim ersten Video der aktuellen Seite beginnen
+    startItem = results.find(r => r.type === "video") || null;
   }
-  const pick = videos[Math.floor(Math.random() * videos.length)];
-  await fetch("/api/play", {method:"POST", headers:{"Content-Type":"application/json"},
-                            body: JSON.stringify({ids: [pick.id]})});
-});
+  if (!startItem && ids) startItem = selVids[0];
+  const body = {
+    ids: ids || [],
+    q: $("#q").value, order: $("#order").value,
+    seen: $("#seen").value, min_watch: seenMinSecs(),
+    start_id: startItem ? startItem.id : 0,
+  };
+  try {
+    const r = await fetch("/api/vslideshow", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("Video-Abspielmodus: " + (j.detail || r.status)); return; }
+    markItemSeenLocally(j.start_id);
+  } catch (e) {
+    alert("Video-Abspielmodus fehlgeschlagen: " + e);
+  }
+}
+
+// Sofort-Rueckmeldung im Grid (NEU-Badge weg), ohne auf den Server zu warten.
+function markItemSeenLocally(id) {
+  if (id == null) return;
+  const now = Date.now() / 1000;
+  const bump = (arr) => { for (const it of arr || []) if (it.id === id) {
+    it.view_count = (it.view_count || 0) + 1; it.viewed_at = now; } };
+  bump(results);
+  for (const entry of _pageCache.values()) bump(entry.results);
+  const badge = document.querySelector(`.card[data-id="${id}"] .badge-unseen`);
+  if (badge) badge.remove();
+}
+
+// Aenderungen, die NICHT aus dem Browser kommen (mpv meldet Videowechsel,
+// Favoriten, Nutzungsdauer beim Schliessen), per Zaehler erkennen und die
+// aktuelle Seite neu laden - Scrollposition bleibt.
+let _viewStamp = null;
+let _viewRefreshPending = false;
+async function pollViewStamp() {
+  try {
+    if (document.hidden) return;
+    const j = await fetch("/api/viewstamp").then(r => r.json());
+    if (_viewStamp !== null && j.stamp !== _viewStamp) _viewRefreshPending = true;
+    _viewStamp = j.stamp;
+    // Bild-Slideshow offen: nicht dazwischenfunken, spaeter nachholen
+    if (_viewRefreshPending && !$("#slideshow").classList.contains("active")) {
+      _viewRefreshPending = false;
+      await refreshCurrentPage();
+    }
+  } catch (e) { /* Server kurz weg - naechster Versuch */ }
+}
+async function refreshCurrentPage() {
+  _pageCache.clear();
+  const pageSize = parseInt($("#limit-q").value) || 200;
+  await search({offset: currentOffset, reset: false, scrollTop: false,
+                _noAutoLocate: true});
+  // Filter "nur ungezeigte": Seite kann leer gelaufen sein
+  if (!results.length && currentOffset > 0 && totalHits > 0) {
+    const last = Math.floor((totalHits - 1) / pageSize) * pageSize;
+    await search({offset: last, reset: false, scrollTop: false, _noAutoLocate: true});
+  }
+}
+setInterval(pollViewStamp, 3000);
+
+$("#play-btn").addEventListener("click", () => startVideoShow(null));
 
 $("#stop-players-btn").addEventListener("click", async () => {
   try {

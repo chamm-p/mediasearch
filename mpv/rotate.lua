@@ -124,3 +124,106 @@ local function apply_default_once()
 end
 mp.register_event("playback-restart", apply_default_once)
 mp.register_event("file-loaded", apply_default_once)
+
+-- ====================================================================
+-- Video-Abspielmodus (Taste V im Browser): Slideshow fuer Videos.
+-- Nur aktiv, wenn der Server vs_sid/vs_url mitgibt (sonst - z.B. beim
+-- einzelnen Video aus dem Dateimanager - bleiben alle mpv-Tasten normal).
+--   vs_next (Default c) : naechstes Video
+--   vs_fav  (Default f) : als Favorit markieren + naechstes Video
+--   vs_prev (Default z) : vorheriges Video
+--   q / ESC             : Abspielmodus beenden
+-- Jeder Videowechsel wird an den Server gemeldet: dort wird das Video SOFORT
+-- als gesehen vermerkt und die Nutzungsdauer des vorigen gebucht.
+-- ====================================================================
+local vs_sid = mp.get_opt("vs_sid")
+local vs_url = mp.get_opt("vs_url")
+if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
+    local vs_py   = mp.get_opt("vs_py") or "python3"
+    local key_nx  = mp.get_opt("vs_next") or "c"
+    local key_fav = mp.get_opt("vs_fav") or "f"
+    local key_pv  = mp.get_opt("vs_prev") or "z"
+    local favtag  = mp.get_opt("vs_favtag") or "favorit"
+
+    -- HTTP-POST ueber Python (ist auf dem Zielsystem sicher vorhanden, curl
+    -- nicht unbedingt). Asynchron: die Wiedergabe wartet nie auf den Server.
+    local post_code = table.concat({
+        "import sys,json,urllib.request",
+        "d=json.dumps({'sid':sys.argv[2],'ev':sys.argv[3],'pos':int(sys.argv[4]),'tag':sys.argv[5]}).encode()",
+        "r=urllib.request.Request(sys.argv[1],d,{'Content-Type':'application/json'})",
+        "print(urllib.request.urlopen(r,timeout=10).read().decode())",
+    }, "\n")
+
+    local function post(ev, pos, on_ok)
+        mp.command_native_async({
+            name = "subprocess",
+            args = { vs_py, "-c", post_code, vs_url, vs_sid, ev,
+                     tostring(pos), favtag },
+            playback_only = false,     -- nicht abbrechen, wenn das Video wechselt
+            capture_stdout = true,
+            capture_stderr = true,
+        }, function(success, res, err)
+            local ok = success and res and res.status == 0
+            if ok then
+                if on_ok then on_ok() end
+            else
+                mp.msg.warn("vs post " .. ev .. " fehlgeschlagen: "
+                            .. tostring(err or (res and res.stderr) or "?"))
+                if ev == "fav" then
+                    mp.osd_message("Favorit konnte NICHT gespeichert werden", 3)
+                end
+            end
+        end)
+    end
+
+    local function pos_count()
+        return mp.get_property_number("playlist-pos", 0) or 0,
+               mp.get_property_number("playlist-count", 0) or 0
+    end
+
+    local function info(prefix)
+        local pos, cnt = pos_count()
+        mp.osd_message(string.format("%sVideo %d / %d", prefix or "", pos + 1, cnt), 2)
+    end
+
+    local function go_next(prefix)
+        local pos, cnt = pos_count()
+        if pos + 1 >= cnt then
+            mp.osd_message((prefix or "") .. "Letztes Video - q/ESC beendet", 3)
+            return
+        end
+        mp.commandv("playlist-next", "force")
+        if prefix then mp.add_timeout(0.4, function() info(prefix) end) end
+    end
+
+    mp.add_forced_key_binding(key_nx, "vs-next", function() go_next(nil) end)
+
+    mp.add_forced_key_binding(key_pv, "vs-prev", function()
+        local pos = pos_count()
+        if pos <= 0 then
+            mp.osd_message("Erstes Video", 2)
+            return
+        end
+        mp.commandv("playlist-prev", "force")
+    end)
+
+    mp.add_forced_key_binding(key_fav, "vs-fav", function()
+        local pos = pos_count()
+        post("fav", pos)                 -- Position des AKTUELLEN Videos
+        go_next("Favorit ★  ")
+    end)
+
+    -- Jeder neu geladene Eintrag -> 'gesehen' + Wechsel melden. Der Server
+    -- ignoriert die Meldung fuer das Video, das gerade schon aktuell ist
+    -- (Startvideo hat er beim Start selbst vermerkt).
+    mp.register_event("file-loaded", function()
+        local pos = pos_count()
+        post("start", pos)
+        -- manuelle Drehung (b/n) gilt nur fuers jeweilige Video
+        mp.set_property_number("video-rotate", 0)
+        info(nil)
+    end)
+
+    mp.msg.info(string.format("Video-Abspielmodus: %s=weiter %s=Favorit %s=zurueck",
+                              key_nx, key_fav, key_pv))
+end

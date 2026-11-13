@@ -60,3 +60,17 @@ port = 8765
 [viewers]
 image = ""                  # z.B. "qiv -f" fuer Fullscreen
 video = ""                  # z.B. "mpv --fs"
+
+# --- Video-Abspielmodus (Taste V / Klick auf ein Video) ---
+# Alle Videos der Auswahl bzw. Suche nacheinander in EINEM mpv.
+# Jedes Video gilt beim Start sofort als "gesehen".
+[player]
+# key_next     = "c"         # naechstes Video
+# key_fav      = "f"         # als Favorit markieren + naechstes Video
+# key_prev     = "z"         # vorheriges Video
+# favorite_tag = "favorit"   # manueller Tag fuer key_fav
+# Hinweis: f und z sind in mpv vorbelegt (f = Vollbild, z = Untertitel-
+# Verzoegerung) und werden NUR im Abspielmodus ueberschrieben - Vollbild
+# geht dort weiter per Doppelklick. Freie Alternativen ohne Konflikt:
+# h, k, y, a, X, U (z.B. key_fav = "h", key_prev = "y").
+# mpv-Tastennamen sind erlaubt, z.B. "ENTER", "Ctrl+f", "RIGHT".

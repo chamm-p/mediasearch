@@ -32,7 +32,7 @@ def _root() -> Path:
     # 2. Argument ist bei manchen Kommandos der root; wir suchen den ersten,
     # der KEINE .db-Datei ist (die ist bei restore das Backup-Argument).
     for a in sys.argv[2:]:
-        if a and not a.endswith(".db"):
+        if a and not a.endswith(".db") and not a.startswith("-"):
             raw = a
             break
     if raw is None:
@@ -251,6 +251,43 @@ def cmd_restore(root: Path) -> None:
     print("-> ./run.sh restart, dann pruefen. Ggf. './run.sh tag <root>' fuer Neues.")
 
 
+def cmd_reset_watch(root: Path) -> None:
+    """Nutzungsdauer (Anzeigedauer) aller Videos auf 0 setzen.
+    Trockenlauf per Default; --apply fuehrt aus (vorher DB-Backup),
+    --seen setzt zusaetzlich 'gesehen' (viewed_at/view_count) zurueck."""
+    from common import backup_db, reset_watch_stats
+    apply = "--apply" in sys.argv[2:]
+    seen = "--seen" in sys.argv[2:]
+    info = reset_watch_stats(root, also_seen=seen, dry_run=True)
+    print(f"Root: {root}")
+    print(f"Videos mit Nutzungsdauer > 0 : {info['watch_reset']} "
+          f"(zusammen {info['watch_hours']} h)")
+    if seen:
+        conn = common.connect(root)
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM files WHERE type='video' "
+                             "AND viewed_at>0").fetchone()[0]
+        finally:
+            conn.close()
+        print(f"Videos als 'gesehen' markiert : {n}")
+    if not apply:
+        what = "Nutzungsdauer" + (" + gesehen" if seen else "")
+        print(f"\nTrockenlauf - nichts geaendert. Zuruecksetzen ({what}):")
+        print("  ./run.sh reset-watch --apply" + (" --seen" if seen else ""))
+        return
+    bk = backup_db(root, daily_dedup=False)
+    if bk is None:
+        print("FEHLER: Backup fehlgeschlagen (DB fehlt/defekt) - nichts geaendert.")
+        print("  ./run.sh db-check")
+        sys.exit(1)
+    print(f"Backup: {bk}")
+    res = reset_watch_stats(root, also_seen=seen)
+    print(f"Zurueckgesetzt: Nutzungsdauer bei {res['watch_reset']} Videos"
+          + (f", 'gesehen' bei {res['seen_reset']} Videos" if seen else "") + ".")
+    print("Laufende Web-UI: Sortierung 'Nutzungsdauer' aktualisiert sich "
+          "spaetestens nach 60 s.")
+
+
 HELP = """DB-Wartung fuer mediasearch
 
   ./run.sh db-check   [root]              Integritaet pruefen + Backups auflisten
@@ -262,6 +299,11 @@ HELP = """DB-Wartung fuer mediasearch
 Backups liegen unter data/<slot>/backups/ und entstehen automatisch nach
 jedem Tagging-Lauf, der die DB veraendert hat (Rotation: letzte 10).
 Eine korrupte DB wird NIE gesichert (Integritaets-Check vorher).
+
+  ./run.sh reset-watch [root] [--apply] [--seen]
+                                          Nutzungsdauer aller Videos auf 0
+                                          (Trockenlauf ohne --apply; --seen setzt
+                                          auch 'gesehen' zurueck; Backup vorher)
 
 db-repair sichert die defekte DB vorher weg, versucht dann sqlite3
 '.recover' und als Fallback ein zeilenweises Retten in eine frische DB.
@@ -282,9 +324,10 @@ def main() -> None:
     elif cmd == "repair":  cmd_repair(root)
     elif cmd == "restore": cmd_restore(root)
     elif cmd == "list":    cmd_check(root)
+    elif cmd == "reset-watch": cmd_reset_watch(root)
     else:
         print(f"unbekanntes db-Kommando: {cmd}")
-        print("erlaubt: check | backup | repair | restore | list")
+        print("erlaubt: check | backup | repair | restore | list | reset-watch")
         sys.exit(1)
 
 
