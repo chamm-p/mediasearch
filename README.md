@@ -110,7 +110,7 @@ Beim ersten Start: im Setup-Panel das **Wurzelverzeichnis** waehlen,
 | k | Video in den Ordner `copy_dir` kopieren (Original bleibt; `config.toml` → `[player]`) |
 | q / Esc | Abspielmodus beenden |
 
-Favoriten tragen dauerhaft einen grossen goldenen „★ Favorit“ oben rechts,
+Favoriten tragen dauerhaft einen goldenen Stern ★ oben rechts,
 solange das Video laeuft (an/aus mit f).
 Jedes Video gilt beim Start sofort als gesehen; die Nutzungsdauer wird pro
 Video gebucht. `f` (sonst Vollbild) und `z` (sonst Untertitel-Verzoegerung)

@@ -134,7 +134,7 @@ mp.register_event("file-loaded", apply_default_once)
 --   vs_prev (Default z) : vorheriges Video
 --   vs_unfav (Default F = Shift+f) : Favorit entfernen (bleibt beim Video)
 --   vs_copy (Default k) : Video nach [player] copy_dir KOPIEREN (Original bleibt)
---   Favoriten tragen DAUERHAFT einen grossen goldenen Stern oben rechts.
+--   Favoriten tragen DAUERHAFT einen goldenen Stern oben rechts.
 --   q / ESC             : Abspielmodus beenden
 -- Jeder Videowechsel wird an den Server gemeldet: dort wird das Video SOFORT
 -- als gesehen vermerkt und die Nutzungsdauer des vorigen gebucht.
@@ -211,8 +211,9 @@ if vs_sid and vs_sid ~= "" and vs_url and vs_url ~= "" then
     local function set_star(on)
         if not star then return end      -- sehr altes mpv ohne Overlays
         if on then
-            star.data = "{\\an9\\fs64\\b1\\bord4\\shad2"
-                     .. "\\1c&H00D7FF&\\3c&H000000&}★ Favorit"
+            -- Groesse: \\fs (64 war zu gross); nur der Stern, kein Text
+            star.data = "{\\an9\\fs44\\b1\\bord3\\shad2"
+                     .. "\\1c&H00D7FF&\\3c&H000000&}★"
             star:update()
         else
             star:remove()
